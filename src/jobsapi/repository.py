@@ -12,7 +12,13 @@ from __future__ import annotations
 import sqlite3
 
 from jobsapi.errors import JobNotFound
-from jobsapi.schemas import JobFilters, Remote, SortField, SortOrder
+from jobsapi.schemas import (
+    CHANGE_VALUE_MAX_LENGTH,
+    JobFilters,
+    Remote,
+    SortField,
+    SortOrder,
+)
 
 # Explicit column lists, never `SELECT *`. Two reasons: a `SELECT *` would start
 # returning any column Build 2 adds tomorrow, and the list endpoint must not
@@ -201,3 +207,196 @@ def get_job(conn: sqlite3.Connection, job_id: int) -> sqlite3.Row:
     if row is None:
         raise JobNotFound(job_id)
     return row
+
+
+# --------------------------------------------------------------------------
+# Change history
+# --------------------------------------------------------------------------
+
+
+def job_exists(conn: sqlite3.Connection, job_id: int) -> bool:
+    """Cheaper than fetching the row when only existence matters.
+
+    `/jobs/{id}/changes` must 404 for an unknown job rather than returning an
+    empty list — an empty list means "this job has never changed", which is a
+    different fact from "this job does not exist".
+    """
+    return (
+        conn.execute("SELECT 1 FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        is not None
+    )
+
+
+def count_job_changes(conn: sqlite3.Connection, job_id: int) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) FROM job_changes WHERE job_id = ?", (job_id,)
+    ).fetchone()
+    return int(row[0])
+
+
+def list_job_changes(
+    conn: sqlite3.Connection, job_id: int, limit: int, offset: int
+) -> list[sqlite3.Row]:
+    """Edit history, newest first, with values truncated in SQL.
+
+    `substr()` and `length()` run in the database so a 30 KB description diff is
+    never read into Python only to be thrown away. Truncating in the response
+    model instead would still have paid to move 32.8 MB across the boundary for
+    a table-wide query.
+
+    The `id` tie-break is here for the same reason as everywhere else:
+    `observed_at` repeats across every change recorded by a single run.
+    """
+    return conn.execute(
+        """
+        SELECT
+            observed_at,
+            field,
+            substr(old_value, 1, ?) AS old_value,
+            substr(new_value, 1, ?) AS new_value,
+            length(old_value)       AS old_length,
+            length(new_value)       AS new_length
+        FROM job_changes
+        WHERE job_id = ?
+        ORDER BY observed_at DESC, id DESC
+        LIMIT ? OFFSET ?
+        """,
+        (
+            CHANGE_VALUE_MAX_LENGTH,
+            CHANGE_VALUE_MAX_LENGTH,
+            job_id,
+            limit,
+            offset,
+        ),
+    ).fetchall()
+
+
+# --------------------------------------------------------------------------
+# Runs and sources
+# --------------------------------------------------------------------------
+
+
+def count_runs(conn: sqlite3.Connection) -> int:
+    return int(conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0])
+
+
+def list_runs(conn: sqlite3.Connection, limit: int, offset: int) -> list[sqlite3.Row]:
+    """Run history, newest first.
+
+    No `duration_seconds` column is computed. Build 2 writes `finished_at` from
+    the same value as `started_at`, so every completed run would report 0.0 —
+    a confidently wrong number is worse than an absent one.
+    """
+    return conn.execute(
+        """
+        SELECT id, source, status, started_at, finished_at,
+               rows_parsed, pages_fetched, page_cap
+        FROM runs
+        ORDER BY started_at DESC, id DESC
+        LIMIT ? OFFSET ?
+        """,
+        (limit, offset),
+    ).fetchall()
+
+
+def list_sources(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Every source that has jobs, with the outcome of its most recent run.
+
+    A LEFT JOIN because a source may have jobs but no run row, or a run row and
+    no jobs — neither should make the source vanish from this list. The
+    correlated subquery picks the latest run per source by id, which is
+    monotonic here where `started_at` ties within a batch.
+    """
+    return conn.execute(
+        """
+        SELECT
+            j.source                AS source,
+            COUNT(*)                AS job_count,
+            r.id                    AS last_run_id,
+            r.status                AS last_run_status,
+            r.started_at            AS last_run_started_at,
+            r.finished_at           AS last_run_finished_at,
+            r.rows_parsed           AS last_run_rows_parsed
+        FROM jobs j
+        LEFT JOIN runs r
+               ON r.id = (SELECT MAX(id) FROM runs WHERE source = j.source)
+        GROUP BY j.source, r.id, r.status, r.started_at, r.finished_at, r.rows_parsed
+        ORDER BY j.source
+        """
+    ).fetchall()
+
+
+# --------------------------------------------------------------------------
+# Stats
+# --------------------------------------------------------------------------
+
+# Nullable columns worth reporting coverage for. Named explicitly rather than
+# discovered from PRAGMA table_info, so adding a column to Build 2's schema does
+# not silently change this service's public response shape.
+_COVERAGE_FIELDS = (
+    "location",
+    "remote",
+    "salary_min",
+    "salary_max",
+    "currency",
+    "salary_raw",
+    "posted_at",
+    "description",
+    "seniority",
+)
+
+
+def stats(conn: sqlite3.Connection) -> dict[str, object]:
+    """Dataset shape in one pass per concern.
+
+    The coverage counts are built as a single SELECT with one SUM per field
+    rather than one query per field: nine round trips over 3,105 rows would be
+    nine full scans to answer one question.
+    """
+    sums = ", ".join(
+        f"SUM(CASE WHEN {field} IS NULL THEN 0 ELSE 1 END) AS {field}"
+        for field in _COVERAGE_FIELDS
+    )
+    row = conn.execute(f"SELECT COUNT(*) AS total, {sums} FROM jobs").fetchone()
+    total = int(row["total"])
+
+    coverage = [
+        {
+            "field": field,
+            "present": int(row[field] or 0),
+            "missing": total - int(row[field] or 0),
+            "coverage": (int(row[field] or 0) / total) if total else 0.0,
+        }
+        for field in _COVERAGE_FIELDS
+    ]
+
+    remote = conn.execute(
+        """
+        SELECT
+            SUM(CASE WHEN remote = 1 THEN 1 ELSE 0 END)    AS yes,
+            SUM(CASE WHEN remote = 0 THEN 1 ELSE 0 END)    AS no,
+            SUM(CASE WHEN remote IS NULL THEN 1 ELSE 0 END) AS unknown
+        FROM jobs
+        """
+    ).fetchone()
+
+    dates = conn.execute(
+        "SELECT MIN(posted_at) AS earliest, MAX(posted_at) AS latest FROM jobs"
+    ).fetchone()
+
+    return {
+        "total_jobs": total,
+        "total_runs": count_runs(conn),
+        "total_changes": int(
+            conn.execute("SELECT COUNT(*) FROM job_changes").fetchone()[0]
+        ),
+        "sources": int(
+            conn.execute("SELECT COUNT(DISTINCT source) FROM jobs").fetchone()[0]
+        ),
+        "coverage": coverage,
+        "remote_true": int(remote["yes"] or 0),
+        "remote_false": int(remote["no"] or 0),
+        "remote_unknown": int(remote["unknown"] or 0),
+        "earliest_posted_at": dates["earliest"],
+        "latest_posted_at": dates["latest"],
+    }
