@@ -284,8 +284,12 @@ def list_runs(conn: sqlite3.Connection, limit: int, offset: int) -> list[sqlite3
     """Run history, newest first.
 
     No `duration_seconds` column is computed. Build 2 writes `finished_at` from
-    the same value as `started_at`, so every completed run would report 0.0 —
-    a confidently wrong number is worse than an absent one.
+    the same value as `started_at` on the success path — measured: equal in 62 of
+    63 finished runs, the exception being a `failed` run that stamped a real 3.9s.
+    So a computed duration would read 0.0 for every *successful* run and
+    plausibly non-zero for a failed one, which is worse than uniformly broken: it
+    invites the conclusion that scrapes are instantaneous. A confidently wrong
+    number is worse than an absent one.
     """
     return conn.execute(
         """
