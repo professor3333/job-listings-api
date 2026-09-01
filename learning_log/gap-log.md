@@ -164,6 +164,11 @@ list only once it has been written up in `learning-log.md`.
 | 2026-09-01 | `src/jobsapi/logging_config.py` | Why a ContextVar carries the request id where a parameter cannot, and why logs go to stdout rather than a file | ☑ |
 | 2026-09-01 | `src/jobsapi/repository.py` (Phase 5) | Why `substr()` belongs in the query and not in the response model, and why `/sources` needs a LEFT JOIN | ☐ |
 | 2026-09-01 | `src/jobsapi/routers/runs.py` | Why `RunSummary` deliberately has no `duration_seconds` | ☐ |
+| 2026-09-01 | `Dockerfile` | Why the build toolchain lives in a stage that never ships, why the database is a volume and not a layer, and why exec-form CMD matters for SIGTERM | ☐ |
+| 2026-09-01 | `.dockerignore` | Why a build context that *could* contain a database is a problem even when no COPY references it | ☐ |
+| 2026-09-01 | `scripts/make_demo_db.py` | Why a reader-only service ships a schema-creating script at all, and why it is stdlib-only | ☐ |
+| 2026-09-01 | `.github/workflows/ci.yml` (docker job) | Why the Dockerfile is verified by querying a running container rather than by a successful build | ☐ |
+| 2026-09-01 | `README.md` | Why every documented command was executed before being written down | ☐ |
 
 ---
 
@@ -340,3 +345,61 @@ between "this run took no time" and "this field is broken". Returning both
 timestamps raw lets the client see the equality for itself. The fix belongs in
 Build 2's repo — this service is a reader and does not launder its source's
 bugs.
+
+---
+
+### Phase 6 — 2026-09-01
+
+**Q1. The Dockerfile could not be built on the machine that wrote it. Why is a
+CI job an acceptable answer rather than a workaround?**
+
+Because the claim in the Definition of Done is not "a Dockerfile exists", it is
+"`docker build` works and the container serves real data from a mounted volume"
+— and that is a claim about a *running container*, which a local build would
+also only partly establish. The CI job builds the image and then queries it:
+`/health` answers, `/jobs` returns rows from the mounted volume, `?limit=0` is
+still a 422 inside the image, the process is uid 1001, and a write to
+`/data/jobs.db` is refused. That is strictly more than "it built on my laptop",
+and it re-runs on every push rather than once. The honest part is the
+bookkeeping: the README and the PR both say the local build was never run.
+
+**Q2. The smoke test opens its own read-write connection to `/data/jobs.db`
+rather than asserting the API returns 503 on a write attempt. Why that shape?**
+
+Because the API has no write path to test — that is the point of the build — so
+asserting on its behaviour would prove nothing about the mount. The service's
+own guarantee is already double-enforced in application code (`mode=ro` on the
+URI, `PRAGMA query_only = 1`), and a test that exercised those would be testing
+the same source file twice. Opening a *plain read-write* connection from inside
+the container tests the layer underneath: the `:ro` bind mount itself. If
+someone dropped `:ro` from the README's `docker run`, every application-level
+assertion would still pass and this one would fail.
+
+**Q3. `default_page_size` and `max_page_size` were removed rather than wired up.
+What would wiring them up have cost?**
+
+The property the whole build rests on. The `1..100` bound is a `Field`
+constraint on `Pagination`, so it is compiled into `/openapi.json` and a
+generated client enforces it before a request is sent. Constraints are
+class-level and evaluated at import, so making the bound configurable would mean
+either building the model dynamically per-process or moving the check into a
+validator that reads settings — and in both cases a deployment could run with
+`max=500` while its own `/docs` still promised 100. "The docs are generated from
+the types, so wrong docs mean wrong types" stops being true the moment a value
+can differ from what the type says. A setting nothing reads is a bug; a setting
+that makes the published schema lie is a worse one.
+
+**Q4. Why is `scripts/make_demo_db.py` stdlib-only, and why does it copy Build
+2's schema instead of importing it?**
+
+Stdlib-only because its two callers cannot assume an install: CI runs it with
+the runner's bare `python3` before the image is even started, and a stranger may
+run it before `uv sync` finishes being explained to them. Adding a dependency
+would make the fallback need the thing it is a fallback for.
+
+It copies the schema for the same reason `tests/conftest.py` does: importing
+`jobscrape` would couple two repositories that are deliberately separate, and
+this service is a *reader* of that schema, not a participant in it. The copy is
+not left to rot on trust — `db.verify_schema` compares the real database's
+columns at startup, so the two drifting apart is a loud refusal to start rather
+than a silent wrong answer.
