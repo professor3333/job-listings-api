@@ -89,6 +89,41 @@ Format: `- YYYY-MM-DD — the concept — where it came up`
   `_` is about making the search mean what the user typed — and the backslash must
   be escaped *first*, or it re-escapes the escapes just added. — Phase 3.
 
+- 2026-09-01 — **A `ContextVar` survives `await` and the threadpool**, so a
+  request id set in middleware is visible to a log call made anywhere in that
+  request without threading a parameter through every signature. This is what
+  makes correlated logging possible from inside `repository.py`. — Phase 5.
+
+- 2026-09-01 — **`logging.StreamHandler(sys.stdout)` binds the stream at
+  construction.** A test using `capsys` therefore sees nothing if the app was
+  built before capture was active — fixture *ordering* silently decides whether
+  the assertion can pass. Capturing with a `logging.Handler` instead is
+  order-independent and exercises the real formatter. — Phase 5,
+  `tests/test_observability.py`.
+
+- 2026-09-01 — **`perf_counter` not `time()` for durations.** A wall clock
+  adjusted mid-request can run backwards and yield a negative elapsed time; a
+  monotonic clock cannot. — Phase 5.
+
+- 2026-09-01 — **Truncate in SQL, not in the response model.** `substr()` and
+  `length()` in the query mean a 30 KB value is never read into Python to be
+  thrown away. Filtering at serialisation time would still have paid to move
+  32.8 MB across the boundary. — Phase 5, `repository.py`.
+
+- 2026-09-01 — **A config option on a subclass is a contract that drifts.**
+  `extra="forbid"` sat on `JobFilters`, so `?colour=red` was 422 on `/jobs` and
+  silently ignored on `/runs` — contradicting `docs/api.md`. Moving it to the
+  shared `Pagination` base made the rule true everywhere at once. Caught by a
+  test, not by reading. — Phase 5, `schemas.py`.
+
+- 2026-09-01 — **The dataset figures in the docs are snapshots, and the scraper
+  keeps running.** `docs/design.md` and `docs/api.md` cite 3,105 jobs; the source
+  database holds 3,498 today. The *proportions* the decisions rest on are stable
+  (`salary_min` NULL: 69% then, 70.4% now — 1,036 of 3,498 populated), which is
+  the point: a decision justified by a proportion survives the data growing, one
+  justified by a row count does not. Any figure quoted in prose needs the date it
+  was measured. — Phase 5/6, `docs/`.
+
 ---
 
 ## AI-WRITTEN register
@@ -100,22 +135,25 @@ list only once it has been written up in `learning-log.md`.
 | ---- | ---- | -------------------- | ----------- |
 | 2026-09-01 | `pyproject.toml` | Why a `src/` layout needs a build backend at all, and what `uv sync` installs the project *as* (editable wheel, not a path on `sys.path`) | ☐ |
 | 2026-09-01 | `.gitignore` | Why `data/` and `*.db` are ignored in a repo whose whole job is reading a database | ☐ |
-| 2026-09-01 | `docs/design.md` | Both Phase 0 decisions and the measurements behind them: `mode=ro` + path-not-policy config, and why WAL is *declined* rather than deferred | ☐ |
-| 2026-09-01 | `src/jobsapi/main.py` | Why an app *factory* rather than a module-level singleton, and what `include_router` does that the `@router.get` decorator did not | ☐ |
-| 2026-09-01 | `src/jobsapi/routers/meta.py` | Why `/health` is `async def` while every sqlite3 endpoint must be plain `def` — the rule is about what the body does, not house style | ☐ |
-| 2026-09-01 | `tests/test_health.py` | Why `TestClient` is used as a context manager (lifespan events), and why the OpenAPI schema is asserted on rather than trusted | ☐ |
+| 2026-09-01 | `docs/design.md` | Both Phase 0 decisions and the measurements behind them: `mode=ro` + path-not-policy config, and why WAL is *declined* rather than deferred | ☑ |
+| 2026-09-01 | `src/jobsapi/main.py` | Why an app *factory* rather than a module-level singleton, and what `include_router` does that the `@router.get` decorator did not | ☑ |
+| 2026-09-01 | `src/jobsapi/routers/meta.py` | Why `/health` is `async def` while every sqlite3 endpoint must be plain `def` — the rule is about what the body does, not house style | ☑ |
+| 2026-09-01 | `tests/test_health.py` | Why `TestClient` is used as a context manager (lifespan events), and why the OpenAPI schema is asserted on rather than trusted | ☑ |
 | 2026-09-01 | `.github/workflows/ci.yml` | What `uv sync --locked` refuses to do, and why CI having no network and no `jobs.db` is the point rather than a limitation | ☐ |
-| 2026-09-01 | `src/jobsapi/config.py` | Why the DB location is a *path, not a policy*, and why `get_settings` is cached but tests never call it | ☐ |
-| 2026-09-01 | `src/jobsapi/db.py` | Why `mode=ro` must be a URI (a plain connect *creates* a missing file), why `check_same_thread=False` is safe per-request but not globally, and why a generator dependency guarantees close | ☐ |
-| 2026-09-01 | `src/jobsapi/errors.py` | Why the repository raises `JobNotFound` and not `HTTPException`, and why BUSY and READONLY_ROLLBACK are two classes rather than one | ☐ |
-| 2026-09-01 | `src/jobsapi/schemas.py` | Three shapes on purpose: input model, list output, detail output — none of them the database row | ☐ |
-| 2026-09-01 | `src/jobsapi/repository.py` | Why `ORDER BY posted_at DESC` alone silently repeats rows across pages, and why identifiers cannot be parameterised | ☐ |
-| 2026-09-01 | `src/jobsapi/routers/jobs.py` | Why this file is plain `def` while `/health` is `async def` | ☐ |
-| 2026-09-01 | `tests/conftest.py` | Why the fixture DB is *written* read-write and *read* read-only, and why the schema is copied rather than imported from Build 2 | ☐ |
-| 2026-09-01 | `src/jobsapi/problems.py` | Why FastAPI's default `detail` (list for 422, string for 404) forces a custom envelope, and why every handler funnels through one builder | ☐ |
-| 2026-09-01 | `src/jobsapi/schemas.py` (Phase 3) | The functional StrEnum for colon-bearing sources, `extra="forbid"`, and why cross-field rules need a model validator rather than field constraints | ☐ |
-| 2026-09-01 | `src/jobsapi/repository.py` (Phase 3) | The clauses+params list pattern that makes an eleventh filter one `if` rather than a combinatorial explosion | ☐ |
-| 2026-09-01 | `docs/api.md` | The three arguable decisions: NULLs never satisfy a filter, unknown params are rejected, `sort` is an allowlist | ☐ |
+| 2026-09-01 | `src/jobsapi/config.py` | Why the DB location is a *path, not a policy*, and why `get_settings` is cached but tests never call it | ☑ |
+| 2026-09-01 | `src/jobsapi/db.py` | Why `mode=ro` must be a URI (a plain connect *creates* a missing file), why `check_same_thread=False` is safe per-request but not globally, and why a generator dependency guarantees close | ☑ |
+| 2026-09-01 | `src/jobsapi/errors.py` | Why the repository raises `JobNotFound` and not `HTTPException`, and why BUSY and READONLY_ROLLBACK are two classes rather than one | ☑ |
+| 2026-09-01 | `src/jobsapi/schemas.py` | Three shapes on purpose: input model, list output, detail output — none of them the database row | ☑ |
+| 2026-09-01 | `src/jobsapi/repository.py` | Why `ORDER BY posted_at DESC` alone silently repeats rows across pages, and why identifiers cannot be parameterised | ☑ |
+| 2026-09-01 | `src/jobsapi/routers/jobs.py` | Why this file is plain `def` while `/health` is `async def` | ☑ |
+| 2026-09-01 | `tests/conftest.py` | Why the fixture DB is *written* read-write and *read* read-only, and why the schema is copied rather than imported from Build 2 | ☑ |
+| 2026-09-01 | `src/jobsapi/problems.py` | Why FastAPI's default `detail` (list for 422, string for 404) forces a custom envelope, and why every handler funnels through one builder | ☑ |
+| 2026-09-01 | `src/jobsapi/schemas.py` (Phase 3) | The functional StrEnum for colon-bearing sources, `extra="forbid"`, and why cross-field rules need a model validator rather than field constraints | ☑ |
+| 2026-09-01 | `src/jobsapi/repository.py` (Phase 3) | The clauses+params list pattern that makes an eleventh filter one `if` rather than a combinatorial explosion | ☑ |
+| 2026-09-01 | `docs/api.md` | The three arguable decisions: NULLs never satisfy a filter, unknown params are rejected, `sort` is an allowlist | ☑ |
+| 2026-09-01 | `src/jobsapi/logging_config.py` | Why a ContextVar carries the request id where a parameter cannot, and why logs go to stdout rather than a file | ☑ |
+| 2026-09-01 | `src/jobsapi/repository.py` (Phase 5) | Why `substr()` belongs in the query and not in the response model, and why `/sources` needs a LEFT JOIN | ☐ |
+| 2026-09-01 | `src/jobsapi/routers/runs.py` | Why `RunSummary` deliberately has no `duration_seconds` | ☐ |
 
 ---
 
@@ -132,6 +170,14 @@ to that router's own `.routes` list. The application knows nothing about it yet.
 `FastAPI` instance (applying any `prefix`, `tags` and dependencies as it goes).
 That two-step split is why a router can be imported and unit-tested on its own,
 and why the same router could be mounted twice under different prefixes.
+
+> **Correction, 2026-09-01 (written while closing the learning log).** The
+> "copies those routes onto the `FastAPI` instance" sentence is true of older
+> FastAPI, not of the installed 0.141.1. `include_router` appends a single
+> `fastapi.routing._IncludedRouter` holding a *reference* to the router plus the
+> prefix/tags/dependencies, and computes effective routes lazily. `app.routes`
+> here contains no `APIRoute` at all. The conclusions stand — see
+> `learning-log.md`, Part 1 entry 1 and Part 2 "Framework mechanics" Q1.
 
 **Q2. `/health` is `async def`, but the project rule says sqlite3 endpoints must
 be plain `def`. Is that a contradiction?**
@@ -240,3 +286,47 @@ only "validation failed" and must guess which of fourteen parameters was wrong.
 RFC 9457 does not standardise field-level errors, so this array is the one part
 that had to be invented — which is an argument *for* adopting the standard, not
 against it: the other 80% came free.
+
+---
+
+### Phase 5 — 2026-09-01
+
+**Q1. The 500 body says nothing on purpose. What makes that defensible rather
+than merely unhelpful?**
+
+That the traceback is written to the log against the same `request_id` the body
+carries. Until Phase 5 it was not written *anywhere* — the handler built a safe
+body and discarded the exception, which made every 500 unresolvable. Both halves
+are needed: an opaque body without a logged traceback is negligence, and a
+traceback in the body is a leak. `test_traceback_reaches_the_log_but_not_the_body`
+asserts them together for that reason.
+
+**Q2. Why does `/jobs/{id}/changes` truncate in SQL rather than in the response
+model, when the response model already controls what is sent?**
+
+Because the response model runs after the data has been read. `job_changes`
+holds 32.8 MB of description diffs, single values up to 30,646 characters;
+truncating at serialisation would still have paid to pull them off disk and into
+Python. `substr()` and `length()` in the query mean the large value never
+crosses the boundary — the true size is reported as a number instead. Measured:
+job 72's six changes are ~92 KB of raw values and 3.4 KB of response.
+
+**Q3. `/sources` returns a bare array while `/jobs` returns an envelope. Is that
+an inconsistency worth fixing?**
+
+No — the envelope exists to make paging expressible. There are eight sources and
+there will not be thousands, so there is no `total` worth carrying and no next
+page to describe. Adding an envelope for symmetry would be ceremony. The
+inconsistency is between *situations*, not between careless decisions, and it is
+documented in `docs/api.md` so a reader does not have to guess which it is.
+
+**Q4. `/runs` omits `duration_seconds` even though both timestamps are present.
+Why not compute it?**
+
+Because Build 2 stamps `finished_at` from the same value as `started_at`, so it
+would be `0.0` for every completed run. Publishing a computed number that is
+always wrong is worse than omitting it: the client cannot tell the difference
+between "this run took no time" and "this field is broken". Returning both
+timestamps raw lets the client see the equality for itself. The fix belongs in
+Build 2's repo — this service is a reader and does not launder its source's
+bugs.

@@ -9,7 +9,15 @@ from fastapi import APIRouter, Depends, Path, Query
 
 from jobsapi import repository
 from jobsapi.db import get_conn
-from jobsapi.schemas import JobDetail, JobFilters, JobPage
+from jobsapi.errors import JobNotFound
+from jobsapi.schemas import (
+    CHANGE_VALUE_MAX_LENGTH,
+    JobChangePage,
+    JobDetail,
+    JobFilters,
+    JobPage,
+    Pagination,
+)
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -70,3 +78,52 @@ def get_job(
     this function never mentions a status code.
     """
     return JobDetail.model_validate(dict(repository.get_job(conn, job_id)))
+
+
+# Declared after `/jobs/{job_id}`, which is safe because the paths differ in
+# segment count — `/jobs/1` cannot match `/jobs/{job_id}/changes`. The ordering
+# rule that matters is between a parameterised segment and a *literal sibling at
+# the same depth*, which is not the case here.
+@router.get(
+    "/{job_id}/changes",
+    response_model=JobChangePage,
+    summary="Edit history for one job",
+    description=(
+        "Field-level changes recorded by the scraper, newest first. Values are "
+        "truncated to 200 characters; `old_length` and `new_length` report the "
+        "true sizes and `truncated` says whether anything was cut."
+    ),
+)
+def list_job_changes(
+    job_id: Annotated[int, Path(ge=1)],
+    pagination: Annotated[Pagination, Query()],
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+) -> JobChangePage:
+    """404 for an unknown job, rather than an empty list.
+
+    An empty list means "this job exists and has never changed" — a different
+    fact from "this job does not exist". Collapsing the two would make the
+    endpoint unable to answer either question.
+    """
+    if not repository.job_exists(conn, job_id):
+        raise JobNotFound(job_id)
+
+    rows = repository.list_job_changes(
+        conn, job_id, limit=pagination.limit, offset=pagination.offset
+    )
+    items = []
+    for row in rows:
+        data = dict(row)
+        old_len, new_len = data.get("old_length"), data.get("new_length")
+        data["truncated"] = any(
+            length is not None and length > CHANGE_VALUE_MAX_LENGTH
+            for length in (old_len, new_len)
+        )
+        items.append(data)
+
+    return JobChangePage(
+        items=items,
+        total=repository.count_job_changes(conn, job_id),
+        limit=pagination.limit,
+        offset=pagination.offset,
+    )

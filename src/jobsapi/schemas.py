@@ -120,7 +120,16 @@ Currency = Annotated[
 
 
 class Pagination(BaseModel):
-    """Paging, shared by every list endpoint."""
+    """Paging, shared by every list endpoint.
+
+    `extra="forbid"` lives here rather than on `JobFilters` so the rule is the
+    same on every list endpoint. It was on the subclass first, which meant
+    `?colour=red` was a 422 on `/jobs` and silently ignored on `/runs` — an
+    inconsistency `docs/api.md` already promised did not exist. A contract
+    stated once and enforced in one place cannot drift between endpoints.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     limit: Annotated[int, Field(ge=LIMIT_MIN, le=LIMIT_MAX)] = LIMIT_DEFAULT
     offset: Annotated[int, Field(ge=0)] = 0
@@ -242,6 +251,108 @@ class JobPage(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+# --------------------------------------------------------------------------
+# Meta / operational response models
+# --------------------------------------------------------------------------
+
+# `job_changes` stores full before/after values, and `description` diffs reach
+# 30 KB each — 32.8 MB across the table. A job with six recorded changes would
+# be ~180 KB of response if the values were served verbatim, so they are
+# truncated and the true lengths reported alongside. This is the clearest case
+# in the build of "the response model is not the database row": 30 KB on disk
+# becomes 200 characters on the wire, deliberately and visibly.
+CHANGE_VALUE_MAX_LENGTH = 200
+
+
+class JobChange(BaseModel):
+    """One recorded edit to a job, with values truncated by design."""
+
+    observed_at: datetime
+    field: str
+    old_value: str | None = None
+    new_value: str | None = None
+    old_length: int | None = None
+    new_length: int | None = None
+    truncated: bool = False
+
+
+class JobChangePage(BaseModel):
+    items: list[JobChange]
+    total: int
+    limit: int
+    offset: int
+
+
+class RunSummary(BaseModel):
+    """One scrape run.
+
+    Deliberately carries no `duration_seconds`. Build 2 stamps `finished_at`
+    from the same value as `started_at`, so every completed run reports zero
+    elapsed. Computing a duration here would publish a confidently wrong number;
+    the two timestamps are exposed raw so a client can see for itself. Filed as
+    a Build 2 bug, not worked around here.
+    """
+
+    id: int
+    source: str
+    status: str
+    started_at: datetime
+    finished_at: datetime | None = None
+    rows_parsed: int | None = None
+    pages_fetched: int | None = None
+    page_cap: int | None = None
+
+
+class RunPage(BaseModel):
+    items: list[RunSummary]
+    total: int
+    limit: int
+    offset: int
+
+
+class SourceSummary(BaseModel):
+    """A source, how many jobs it produced, and how its last run ended.
+
+    `last_run_status` can be `running` indefinitely: a scraper that dies between
+    transactions never writes `finished_at`. That is reported as-is rather than
+    guessed at — this service cannot distinguish a live run from an abandoned one
+    by querying, because the discriminator is a `-journal` file on disk, not a
+    row.
+    """
+
+    source: str
+    job_count: int
+    last_run_id: int | None = None
+    last_run_status: str | None = None
+    last_run_started_at: datetime | None = None
+    last_run_finished_at: datetime | None = None
+    last_run_rows_parsed: int | None = None
+
+
+class FieldCoverage(BaseModel):
+    """How often a nullable field is actually populated."""
+
+    field: str
+    present: int
+    missing: int
+    coverage: float = Field(description="Fraction populated, 0.0 to 1.0.")
+
+
+class Stats(BaseModel):
+    """Dataset shape. The numbers that make the NULL decisions legible."""
+
+    total_jobs: int
+    total_runs: int
+    total_changes: int
+    sources: int
+    coverage: list[FieldCoverage]
+    remote_true: int
+    remote_false: int
+    remote_unknown: int
+    earliest_posted_at: date | None = None
+    latest_posted_at: date | None = None
 
 
 class ProblemDetail(BaseModel):

@@ -78,7 +78,24 @@ def connect(settings: Settings) -> sqlite3.Connection:
     uri = f"{settings.db_path.resolve().as_uri()}?mode=ro"
     conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+
+    # PRAGMA values are integers from our own settings, formatted into the
+    # statement because PRAGMA does not accept bound parameters — the same
+    # constraint as ORDER BY, and the same defence: the value never comes from a
+    # request. int() makes that explicit rather than trusting the type hint.
     conn.execute(f"PRAGMA busy_timeout = {int(settings.busy_timeout_ms)}")
+    conn.execute(f"PRAGMA cache_size = {int(settings.cache_size_kib)}")
+
+    # Belt and braces. `mode=ro` already makes writes impossible at the file
+    # level; `query_only` refuses them at the connection level too. Neither is
+    # load-bearing on its own being enough — the point is that "this service
+    # never writes to jobs.db" is enforced in two independent places, so a change
+    # to one does not silently remove the guarantee.
+    conn.execute("PRAGMA query_only = 1")
+
+    # Sorting a large result set can spill to a temp file; keeping it in memory
+    # matters in a container whose filesystem is read-only.
+    conn.execute("PRAGMA temp_store = MEMORY")
     return conn
 
 

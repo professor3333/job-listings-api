@@ -7,14 +7,18 @@ a handful of hand-written rows, including the awkward ones.
 
 from __future__ import annotations
 
+import json
+import logging
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from jobsapi.config import Settings, get_settings
+from jobsapi.logging_config import JsonFormatter
 from jobsapi.main import create_app
 
 # Mirrors Build 2's schema. Copied rather than imported: this service is a
@@ -45,6 +49,29 @@ CREATE TABLE jobs (
 );
 CREATE INDEX idx_jobs_source_lastseen ON jobs(source, last_seen);
 CREATE INDEX idx_jobs_posted          ON jobs(posted_at);
+
+CREATE TABLE runs (
+    id            INTEGER PRIMARY KEY,
+    source        TEXT    NOT NULL,
+    started_at    TEXT    NOT NULL,
+    finished_at   TEXT,
+    status        TEXT    NOT NULL,
+    rows_parsed   INTEGER,
+    rules_version INTEGER NOT NULL DEFAULT 1,
+    page_cap      INTEGER,
+    pages_fetched INTEGER
+);
+CREATE INDEX idx_runs_source_status ON runs(source, status, started_at);
+
+CREATE TABLE job_changes (
+    id          INTEGER PRIMARY KEY,
+    job_id      INTEGER NOT NULL REFERENCES jobs(id),
+    observed_at TEXT    NOT NULL,
+    field       TEXT    NOT NULL,
+    old_value   TEXT,
+    new_value   TEXT
+);
+CREATE INDEX idx_changes_job ON job_changes(job_id, observed_at);
 """
 
 _SEEN = ("2026-08-01T00:00:00+00:00", "2026-08-31T03:45:00+00:00")
@@ -159,6 +186,58 @@ ROWS: list[tuple] = [
 ]
 
 
+# Runs, chosen to reproduce the two states the real data actually contains:
+# a finished run, and one stuck at `running` because the scraper died without
+# ever writing `finished_at`. Note finished_at == started_at on the completed
+# ones — that is Build 2's bug, faithfully reproduced so the API's refusal to
+# report a duration is tested against the real shape rather than an idealised one.
+RUNS: list[tuple] = [
+    (
+        1,
+        "arbeitnow",
+        "2026-08-30T03:45:08+00:00",
+        "2026-08-30T03:45:08+00:00",
+        "ok",
+        2,
+        1,
+        8,
+        1,
+    ),
+    (
+        2,
+        "greenhouse:anthropic",
+        "2026-08-31T03:45:35+00:00",
+        "2026-08-31T03:45:35+00:00",
+        "ok",
+        1,
+        1,
+        8,
+        1,
+    ),
+    (
+        3,
+        "python_org",
+        "2026-08-31T03:45:40+00:00",
+        "2026-08-31T03:45:40+00:00",
+        "partial",
+        1,
+        1,
+        8,
+        1,
+    ),
+    (4, "arbeitnow", "2026-09-01T03:45:08+00:00", None, "running", None, 1, 8, None),
+]
+
+# One small change and one huge one, so truncation is exercised rather than
+# assumed. The real table holds description diffs up to 30,646 characters.
+_BIG = "x" * 5_000
+CHANGES: list[tuple] = [
+    (1, 1, "2026-08-30T03:45:08+00:00", "salary_raw", "80k-100k", "90k-120k"),
+    (2, 1, "2026-08-31T03:45:08+00:00", "description", _BIG, _BIG + "y"),
+    (3, 2, "2026-08-31T03:45:08+00:00", "title", "Support Eng", "Support Engineer"),
+]
+
+
 def build_database(path: Path, rows: list[tuple] | None = None) -> None:
     """Create a fixture database at `path`.
 
@@ -173,9 +252,45 @@ def build_database(path: Path, rows: list[tuple] | None = None) -> None:
             f"INSERT INTO jobs VALUES ({', '.join('?' * 19)})",
             ROWS if rows is None else rows,
         )
+        conn.executemany(f"INSERT INTO runs VALUES ({', '.join('?' * 9)})", RUNS)
+        conn.executemany(
+            f"INSERT INTO job_changes VALUES ({', '.join('?' * 6)})", CHANGES
+        )
         conn.commit()
     finally:
         conn.close()
+
+
+@contextmanager
+def _capturing_logs() -> Iterator[list[dict]]:
+    """Collect structured log output as parsed dicts.
+
+    A capturing *handler* rather than `capsys`, because `configure_logging`
+    binds `sys.stdout` when the app is built — so whether capsys sees anything
+    would depend on fixture ordering. Attaching a handler inside the block is
+    order-independent, and it exercises the real `JsonFormatter` rather than
+    assuming what it wrote.
+    """
+    records: list[dict] = []
+    formatter = JsonFormatter()
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(json.loads(formatter.format(record)))
+
+    handler = _Capture()
+    root = logging.getLogger()
+    root.addHandler(handler)
+    try:
+        yield records
+    finally:
+        root.removeHandler(handler)
+
+
+@pytest.fixture
+def capture_logs() -> Callable[[], Iterator[list[dict]]]:
+    """Usage: `with capture_logs() as records: ...`"""
+    return _capturing_logs
 
 
 @pytest.fixture(autouse=True)

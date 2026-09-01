@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     default_page_size: int = Field(default=20, ge=1)
     max_page_size: int = Field(default=100, ge=1)
 
+    log_level: str = "INFO"
+
+    # Page cache for one connection, in KiB when negative (SQLite's convention:
+    # a negative value means KiB, a positive one means pages). 8 MiB is generous
+    # for a 58 MB database and costs nothing when unused.
+    cache_size_kib: int = Field(default=-8_000)
+
 
 @lru_cache
 def get_settings() -> Settings:

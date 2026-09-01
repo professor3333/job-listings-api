@@ -15,9 +15,12 @@ Base URL in development: `http://127.0.0.1:8000`
 | GET    | `/health`          | `200`  | `Health`       | Liveness. Touches no database and no filesystem. |
 | GET    | `/jobs`            | `200`  | `JobPage`      | Filtered, sorted, paginated. |
 | GET    | `/jobs/{job_id}`   | `200`  | `JobDetail`    | `404` when the id matches no row. |
+| GET    | `/jobs/{job_id}/changes` | `200` | `JobChangePage` | Edit history. `404` for an unknown job. |
+| GET    | `/sources`         | `200`  | `list[SourceSummary]` | Bare array — bounded cardinality. |
+| GET    | `/runs`            | `200`  | `RunPage`      | Paginated run history. |
+| GET    | `/stats`           | `200`  | `Stats`        | Counts, coverage, tri-state split. |
 
-Planned, not yet implemented: `/jobs/{job_id}/changes`, `/sources`, `/runs`,
-`/stats`.
+Every response carries `X-Request-ID` and `X-Response-Time-ms`.
 
 ### Why `/health` touches no database
 
@@ -243,6 +246,103 @@ Returns `JobDetail`: every `JobSummary` field plus `source_id`, `salary_raw`,
 curl 'http://127.0.0.1:8000/jobs/1'
 curl -i 'http://127.0.0.1:8000/jobs/999999999'   # 404, application/problem+json
 ```
+
+---
+
+---
+
+## `GET /jobs/{job_id}/changes`
+
+Field-level edits recorded by the scraper, newest first, paginated.
+
+**Values are truncated to 200 characters by design.** `job_changes` stores full
+before/after values, and `description` diffs reach 30,646 characters — 32.8 MB
+across the table. One real job (id 72) has six recorded changes which would be
+roughly 92 KB of response served verbatim; truncated, it is 3.4 KB.
+
+`old_length` and `new_length` report the *true* sizes and `truncated` says
+whether anything was cut, so a client is never misled about what it received.
+Truncation happens in SQL (`substr`), not in the response model — filtering
+afterwards would still have paid to read the full values off disk.
+
+```jsonc
+{ "items": [ { "observed_at": "2026-08-31T03:45:08Z", "field": "description",
+               "old_value": "…200 chars…", "new_value": "…200 chars…",
+               "old_length": 7669, "new_length": 7691, "truncated": true } ],
+  "total": 6, "limit": 20, "offset": 0 }
+```
+
+An unknown `job_id` is a **`404`, not an empty list**: "this job has never
+changed" and "this job does not exist" are different facts, and collapsing them
+would leave the endpoint unable to answer either.
+
+---
+
+## `GET /sources`
+
+One entry per source that has jobs, with the outcome of its most recent run.
+
+Returns a **bare array**, deliberately unlike `/jobs`. There are eight sources
+and there will not be thousands, so there is nothing to paginate and no `total`
+worth carrying. An envelope exists to make paging expressible; where paging is
+meaningless it is ceremony.
+
+`last_run_status` may be `running` indefinitely — a scraper that dies between
+transactions never writes `finished_at`. That is reported as-is. This service
+cannot distinguish a live run from an abandoned one by querying, because the
+discriminator is a `-journal` file on disk, not a row.
+
+A source with jobs but no run row still appears, with null run fields.
+
+---
+
+## `GET /runs`
+
+Paginated run history, newest first.
+
+**No duration is reported.** Build 2 stamps `finished_at` from the same value as
+`started_at`, so every completed run shows zero elapsed. A computed
+`duration_seconds` would be `0.0` for all of them — confidently wrong. Both
+timestamps are returned raw so a client can see the problem for itself. This is
+an upstream bug to fix in Build 2's repo, not to launder here.
+
+---
+
+## `GET /stats`
+
+Counts, per-field coverage, the `remote` tri-state split, and the `posted_at`
+date range.
+
+Coverage is the honest counterpart to the NULL-filter decision above: a client
+seeing `salary_min` populated in 31% of rows understands why a salary filter
+returns little, rather than assuming the filter is broken. Real values:
+
+| Field | Coverage |
+| ----- | -------- |
+| `posted_at` | 100.00% |
+| `description` | 99.19% |
+| `location` | 97.84% |
+| `remote` | 63.64% |
+| `seniority` | 50.82% |
+| `currency` / `salary_raw` | 39.61% |
+| `salary_min` | 31.47% |
+| `salary_max` | 29.02% |
+
+---
+
+## Observability
+
+Every response carries:
+
+| Header | Meaning |
+| ------ | ------- |
+| `X-Request-ID` | Correlation id, also in every problem body as `request_id`. |
+| `X-Response-Time-ms` | Server-side duration, measured with a monotonic clock. |
+
+Logs are one JSON object per line on stdout, each carrying `request_id`. A `500`
+body deliberately says nothing; the traceback is written to the log against the
+same id, which is what makes the opaque body defensible rather than merely
+unhelpful.
 
 ---
 

@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from time import perf_counter
 from uuid import uuid4
 
 from fastapi import FastAPI, Request, Response
 
 from jobsapi.config import Settings, get_settings
 from jobsapi.db import check_database
+from jobsapi.logging_config import configure_logging, request_id_var
 from jobsapi.problems import PROBLEM_MEDIA_TYPE, register_handlers
-from jobsapi.routers import jobs, meta
+from jobsapi.routers import jobs, meta, runs
 from jobsapi.schemas import Problem
 
 # Declared once, app-wide, so /openapi.json advertises the problem shape instead
@@ -42,6 +45,10 @@ PROBLEM_RESPONSES: dict[int | str, dict] = {
 }
 
 
+_access_log = logging.getLogger("jobsapi.access")
+_log = logging.getLogger("jobsapi")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Verify the database before the first request, not during it.
@@ -50,8 +57,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     row, and this is where it is enforced. Checking lazily would turn a
     misconfigured path into a 500 on whichever request happened to arrive first.
     """
-    check_database(app.state.settings)
+    settings: Settings = app.state.settings
+    check_database(settings)
+    _log.info(
+        "startup",
+        extra={"db_path": str(settings.db_path), "version": app.version},
+    )
     yield
+    _log.info("shutdown")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -65,7 +78,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     """
     app = FastAPI(
         title="Job Listings API",
-        version="0.3.0",
+        version="0.5.0",
         summary="Read-only REST API over the job-listing-scraper dataset.",
         description=(
             "Errors use RFC 9457 problem details "
@@ -75,23 +88,53 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         responses=PROBLEM_RESPONSES,
     )
     app.state.settings = settings or get_settings()
+    configure_logging(app.state.settings.log_level)
 
     @app.middleware("http")
-    async def _assign_request_id(request: Request, call_next) -> Response:
-        """Tag every request, and echo the tag back.
+    async def _observe(request: Request, call_next) -> Response:
+        """Tag, time, and log every request.
 
-        Set before routing so it is available to exception handlers — including
-        the catch-all, where it is the only thing connecting the opaque body a
-        client sees to the traceback in the log.
+        The id is set in *two* places on purpose: `request.state` for the
+        exception handlers, which have the request in hand, and a ContextVar for
+        the log formatter, which does not. The ContextVar is what lets a log
+        line written deep inside the repository carry the id without every
+        function signature growing a parameter.
+
+        Timing uses `perf_counter`, not `time()` — a monotonic clock cannot go
+        backwards when the system clock is adjusted, which is the difference
+        between a plausible duration and a negative one.
         """
-        request.state.request_id = uuid4().hex
-        response = await call_next(request)
-        response.headers["X-Request-ID"] = request.state.request_id
+        rid = uuid4().hex
+        request.state.request_id = rid
+        token = request_id_var.set(rid)
+        started = perf_counter()
+        try:
+            response = await call_next(request)
+        finally:
+            elapsed_ms = (perf_counter() - started) * 1000
+            request_id_var.reset(token)
+
+        response.headers["X-Request-ID"] = rid
+        response.headers["X-Response-Time-ms"] = f"{elapsed_ms:.1f}"
+        _access_log.info(
+            "request",
+            extra={
+                "http": {
+                    "method": request.method,
+                    "path": request.url.path,
+                    "query": str(request.url.query),
+                    "status": response.status_code,
+                    "duration_ms": round(elapsed_ms, 1),
+                },
+                "request_id": rid,
+            },
+        )
         return response
 
     register_handlers(app)
     app.include_router(meta.router)
     app.include_router(jobs.router)
+    app.include_router(runs.router)
     return app
 
 

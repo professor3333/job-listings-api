@@ -8,6 +8,7 @@ Everything here exists to make `detail` mean one thing.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from typing import Any
 
@@ -23,6 +24,8 @@ from jobsapi.schemas import Problem, ProblemDetail
 # The media type is part of the standard, not decoration: it tells a client the
 # body follows RFC 9457 without having to guess from its keys.
 PROBLEM_MEDIA_TYPE = "application/problem+json"
+
+_log = logging.getLogger("jobsapi.errors")
 
 # Machine-readable codes. Clients branch on these, never on `title` or `detail`,
 # which are prose and may be reworded.
@@ -204,6 +207,18 @@ def register_handlers(app: FastAPI) -> None:
         than a reminder to be careful. `request_id` is what lets an operator
         find the traceback that belongs to the failure a user is reporting.
         """
+        # The other half of "no internals in the body": if the traceback is not
+        # written here, it is written nowhere, and a 500 becomes unresolvable.
+        # `exc_info=exc` is what makes the formatter emit it; `request_id` is
+        # what lets an operator find this line from the body a user reports.
+        _log.exception(
+            "unhandled_exception",
+            exc_info=exc,
+            extra={
+                "http": {"method": request.method, "path": request.url.path},
+                "request_id": request_id(request),
+            },
+        )
         return problem_response(
             request,
             status=500,
