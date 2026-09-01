@@ -1,0 +1,41 @@
+"""Settings, read from the environment with a `JOBSAPI_` prefix."""
+
+from functools import lru_cache
+from pathlib import Path
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """Configuration for one running instance.
+
+    The database path is a *path, not a policy*. Decision 1 in docs/design.md
+    chose "open the source database read-only"; it did not choose *which* file.
+    Pointing this at a snapshot instead of the live scraper database is therefore
+    a deployment choice made at runtime, and no code branches on it.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="JOBSAPI_", extra="ignore")
+
+    db_path: Path = Path.home() / "code" / "job-listing-scraper" / "data" / "jobs.db"
+
+    # How long SQLite waits on a lock before giving up. The scraper takes an
+    # EXCLUSIVE lock only for the duration of a commit, so a few hundred ms
+    # would do; 5s is slack for a slow disk. Exceeding it raises SQLITE_BUSY,
+    # which is transient and becomes a 503 -- never a hang.
+    busy_timeout_ms: int = Field(default=5_000, ge=0)
+
+    default_page_size: int = Field(default=20, ge=1)
+    max_page_size: int = Field(default=100, ge=1)
+
+
+@lru_cache
+def get_settings() -> Settings:
+    """Process-wide settings, read from the environment once.
+
+    Cached because reading the environment on every request is wasted work and
+    would let configuration change under a running process. Tests do not call
+    this -- they construct `Settings` directly and hand it to `create_app`.
+    """
+    return Settings()
