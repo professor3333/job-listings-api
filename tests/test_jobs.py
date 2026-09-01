@@ -94,7 +94,9 @@ class TestListJobs:
         """
         response = client.get("/jobs", params=params)
         assert response.status_code == 422
-        assert any(field in e["loc"] for e in response.json()["detail"])
+        body = response.json()
+        assert body["code"] == "VALIDATION_FAILED"
+        assert any(e["field"] == field for e in body["errors"])
 
     def test_boundaries_are_inclusive(self, client: TestClient) -> None:
         assert client.get("/jobs", params={"limit": 1}).status_code == 200
@@ -124,7 +126,7 @@ class TestGetJob:
         """Typing the path parameter as int is what buys this."""
         response = client.get("/jobs/abc")
         assert response.status_code == 422
-        assert any("job_id" in e["loc"] for e in response.json()["detail"])
+        assert any(e["field"] == "job_id" for e in response.json()["errors"])
 
     def test_null_posted_at_serialises_as_null(self, client: TestClient) -> None:
         assert client.get("/jobs/5").json()["posted_at"] is None
