@@ -18,6 +18,7 @@ from jobsapi.errors import (
     SchemaContractError,
 )
 from jobsapi.main import create_app
+from jobsapi.schemas import JobFilters
 
 
 class TestReadOnly:
@@ -99,8 +100,8 @@ class TestRepositoryBoundary:
     def test_queries_need_no_http(self, settings: Settings) -> None:
         conn = connect(settings)
         try:
-            assert repository.count_jobs(conn) == 5
-            assert len(repository.list_jobs(conn, limit=2, offset=0)) == 2
+            assert repository.count_jobs(conn, JobFilters()) == 5
+            assert len(repository.list_jobs(conn, JobFilters(limit=2))) == 2
             assert repository.get_job(conn, 1)["title"] == "Senior Python Engineer"
         finally:
             conn.close()

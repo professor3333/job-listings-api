@@ -68,6 +68,27 @@ Format: `- YYYY-MM-DD — the concept — where it came up`
   lifespan check retroactively broke Phase 1's tests, which had been constructing
   an app with default settings. See DEBUGGING.md. — Phase 2.
 
+- 2026-09-01 — **`PydanticCustomError` keeps a machine-readable `type` on a
+  model-level validator.** A bare `ValueError` in a `@model_validator` arrives as
+  `type: "value_error"`, indistinguishable from other failures. Raising
+  `PydanticCustomError("cross_field_conflict", ...)` lets the error handler tell a
+  cross-field conflict from a single-field one without inspecting `loc`.
+  — Phase 3, `schemas.py`.
+
+- 2026-09-01 — **`model_config = ConfigDict(extra="forbid")` on a Query model
+  makes unknown query parameters a 422.** That is what turns "ignore or reject
+  `?colour=red`" from a wish into an enforced decision. — Phase 3.
+
+- 2026-09-01 — **SQLite's `LIKE` is case-insensitive for ASCII only.** `company=acme`
+  matches "Acme GmbH", but `ürsprung` does not match "Ürsprung". A real fix needs
+  ICU or a normalised column; the limitation is documented rather than papered
+  over. — Phase 3, `repository.py`.
+
+- 2026-09-01 — **Escaping LIKE wildcards is correctness, not injection defence.**
+  The value is already a bound parameter and can never execute. Escaping `%` and
+  `_` is about making the search mean what the user typed — and the backslash must
+  be escaped *first*, or it re-escapes the escapes just added. — Phase 3.
+
 ---
 
 ## AI-WRITTEN register
@@ -91,6 +112,10 @@ list only once it has been written up in `learning-log.md`.
 | 2026-09-01 | `src/jobsapi/repository.py` | Why `ORDER BY posted_at DESC` alone silently repeats rows across pages, and why identifiers cannot be parameterised | ☐ |
 | 2026-09-01 | `src/jobsapi/routers/jobs.py` | Why this file is plain `def` while `/health` is `async def` | ☐ |
 | 2026-09-01 | `tests/conftest.py` | Why the fixture DB is *written* read-write and *read* read-only, and why the schema is copied rather than imported from Build 2 | ☐ |
+| 2026-09-01 | `src/jobsapi/problems.py` | Why FastAPI's default `detail` (list for 422, string for 404) forces a custom envelope, and why every handler funnels through one builder | ☐ |
+| 2026-09-01 | `src/jobsapi/schemas.py` (Phase 3) | The functional StrEnum for colon-bearing sources, `extra="forbid"`, and why cross-field rules need a model validator rather than field constraints | ☐ |
+| 2026-09-01 | `src/jobsapi/repository.py` (Phase 3) | The clauses+params list pattern that makes an eleventh filter one `if` rather than a combinatorial explosion | ☐ |
+| 2026-09-01 | `docs/api.md` | The three arguable decisions: NULLs never satisfy a filter, unknown params are rejected, `sort` is an allowlist | ☐ |
 
 ---
 
@@ -173,10 +198,45 @@ exact bug the check exists to catch.
 
 ---
 
-### Open item deferred to Phase 3
+### Phase 3 — 2026-09-01
 
-`GET /nope` and the 404 from `/jobs/999999999` still return FastAPI's default
-`{"detail": ...}`. Decision 2 requires RFC 9457 problem details for *every* 4xx.
-The boundary is already right — the repository raises `JobNotFound` and an
-exception handler translates it — but the body shape is a placeholder until the
-Phase 3 handlers land.
+**Q1. `?sort=id;DROP TABLE jobs` returns 422. Which line of code stopped it, and
+would escaping have been an acceptable alternative?**
+
+The enum did, during request validation — `SortField` has no such member, so the
+request never reaches `repository.py`. Escaping would not have been acceptable,
+because a column name cannot be a bound parameter at all: `ORDER BY ?` is not
+valid SQL. Values are parameterised; identifiers must be *chosen* from a fixed
+set written in our own source. That is why `content_hash` is also rejected
+despite being a real column — the allowlist defines the public contract, not
+merely what is safe.
+
+**Q2. Does `salary_min_gte=100000` return rows where `salary_min` is NULL, and
+who decided?**
+
+No, and it was a decision rather than a discovery. `NULL >= 100000` evaluates to
+NULL, which is not true, so SQLite excludes the row — but the reason to keep that
+behaviour is that a filter on a value cannot be satisfied by the *absence* of
+that value. It governs 69% of the dataset, so it is documented in `docs/api.md`
+rather than left to be inferred. Verified against the real database:
+`salary_min_gte=0` returns 977 of 3,105 rows, exactly the non-NULL count.
+
+**Q3. Why is a cross-field failure 422 and not 400, given it is "well-formed but
+semantically invalid"?**
+
+Because 422 *is* "well-formed but semantically invalid" — RFC 9110 §15.5.21:
+syntax parsed, content type understood, instructions could not be followed. And
+because the alternative costs real code: a `@model_validator` produces 422 for
+free, whereas 400 would require raising `HTTPException(400)` inside the route —
+dragging validation out of `schemas.py` and breaking the boundary — or
+re-classifying `RequestValidationError` by inspecting `loc`. The distinction a
+client can act on is carried by `code: CROSS_FIELD_CONFLICT` instead.
+
+**Q4. What breaks if the `errors[]` array is dropped from the envelope?**
+
+The single best property of FastAPI's default. Pydantic's `loc` names the exact
+parameter and `msg` states the rule; without forwarding them the client learns
+only "validation failed" and must guess which of fourteen parameters was wrong.
+RFC 9457 does not standardise field-level errors, so this array is the one part
+that had to be invented — which is an argument *for* adopting the standard, not
+against it: the other 80% came free.
