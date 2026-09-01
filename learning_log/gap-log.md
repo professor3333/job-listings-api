@@ -55,9 +55,51 @@ list only once it has been written up in `learning-log.md`.
 | 2026-09-01 | `pyproject.toml` | Why a `src/` layout needs a build backend at all, and what `uv sync` installs the project *as* (editable wheel, not a path on `sys.path`) | ☐ |
 | 2026-09-01 | `.gitignore` | Why `data/` and `*.db` are ignored in a repo whose whole job is reading a database | ☐ |
 | 2026-09-01 | `docs/design.md` | Both Phase 0 decisions and the measurements behind them: `mode=ro` + path-not-policy config, and why WAL is *declined* rather than deferred | ☐ |
+| 2026-09-01 | `src/jobsapi/main.py` | Why an app *factory* rather than a module-level singleton, and what `include_router` does that the `@router.get` decorator did not | ☐ |
+| 2026-09-01 | `src/jobsapi/routers/meta.py` | Why `/health` is `async def` while every sqlite3 endpoint must be plain `def` — the rule is about what the body does, not house style | ☐ |
+| 2026-09-01 | `tests/test_health.py` | Why `TestClient` is used as a context manager (lifespan events), and why the OpenAPI schema is asserted on rather than trusted | ☐ |
+| 2026-09-01 | `.github/workflows/ci.yml` | What `uv sync --locked` refuses to do, and why CI having no network and no `jobs.db` is the point rather than a limitation | ☐ |
 
 ---
 
 ## Explain-back questions (asked and answered before each commit)
 
-_(nothing yet — first round comes at the end of Phase 1)_
+### Phase 1 — 2026-09-01
+
+**Q1. `@router.get("/health")` runs at import time. What does it register, and
+with what — and why does the app still not have the route afterwards?**
+
+It registers an `APIRoute` on the `APIRouter` *object* `meta.router`, appending
+to that router's own `.routes` list. The application knows nothing about it yet.
+`app.include_router(meta.router)` is the step that copies those routes onto the
+`FastAPI` instance (applying any `prefix`, `tags` and dependencies as it goes).
+That two-step split is why a router can be imported and unit-tested on its own,
+and why the same router could be mounted twice under different prefixes.
+
+**Q2. `/health` is `async def`, but the project rule says sqlite3 endpoints must
+be plain `def`. Is that a contradiction?**
+
+No — the rule is about what the function body does. FastAPI runs a plain `def`
+endpoint in a threadpool (`run_in_threadpool`), so a blocking call inside it
+occupies a worker thread and leaves the event loop free. An `async def` endpoint
+runs *directly on the event loop*, so any blocking call inside it stalls every
+other request in the process. `/health` performs no I/O whatsoever, so `async
+def` is strictly cheaper — no threadpool hop. The moment a function touches
+`sqlite3`, it must become plain `def`.
+
+**Q3. `test_health_is_declared_in_the_openapi_schema` asserts on
+`/openapi.json`. Why is that not testing FastAPI's code rather than ours?**
+
+Because the schema is derived from *our* type hints. `Literal["ok"]` is what
+makes the schema say `const: "ok"`; widening it to `str` would still pass the
+happy-path test but would silently publish a weaker promise to every reader of
+`/docs`. The assertion pins the contract, not the framework — it fails when our
+declaration changes, which is the thing that can actually regress.
+
+---
+
+### Open item deferred to Phase 3
+
+`GET /nope` currently returns FastAPI's default `{"detail": "Not Found"}`.
+Decision 2 requires RFC 9457 problem details for *every* 4xx. The exception
+handlers that enforce it land in Phase 3, not here.

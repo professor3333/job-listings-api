@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# Cancel an in-progress run when the same branch is pushed again — the older
+# result is stale the moment a newer commit exists.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      # --locked fails if uv.lock does not match pyproject.toml, rather than
+      # silently re-resolving. CI must build the same dependency set that was
+      # tested locally, or it is testing something else.
+      - name: Install dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      # No network and no jobs.db on the runner: the suite must be self-contained.
+      # This is the standing proof of the Definition-of-Done line "pytest runs
+      # green with the wifi off and with jobs.db deleted".
+      - name: Tests
+        run: uv run pytest
