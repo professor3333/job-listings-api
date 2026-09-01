@@ -42,3 +42,86 @@ jobs:
       # green with the wifi off and with jobs.db deleted".
       - name: Tests
         run: uv run pytest
+
+  # The Dockerfile is verified here rather than on a developer's machine,
+  # because "docker build works and the container serves real data from a
+  # mounted volume" is a Definition-of-Done line and an unverified claim is not
+  # a done one. This job builds the image and then actually queries it.
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # BuildKit, which the `# syntax=` directive and the `--mount=type=cache`
+      # instructions in the Dockerfile both require.
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # `--load` puts the built image into the local daemon so the next step can
+      # run it; without it a buildx build stays in the build cache.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: job-listings-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # No scraper and no 58 MB jobs.db on a runner, so the volume gets a demo
+      # database with the same schema. The script is stdlib-only precisely so it
+      # runs here without installing the project.
+      - name: Build a demo database for the volume
+        run: |
+          mkdir -p /tmp/jobsdata
+          python3 scripts/make_demo_db.py /tmp/jobsdata/jobs.db
+          chmod 755 /tmp/jobsdata && chmod 644 /tmp/jobsdata/jobs.db
+
+      # Mounted read-only, exactly as the README documents it. If the service
+      # ever attempted a write, this mount is what would fail it.
+      - name: Run the container
+        run: |
+          docker run -d --name api -p 8000:8000 \
+            -v /tmp/jobsdata:/data:ro job-listings-api:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then
+              echo "up after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "container never became healthy"; docker logs api; exit 1
+
+      - name: Smoke test the running container
+        run: |
+          set -euo pipefail
+
+          echo "== /health =="
+          test "$(curl -fsS http://127.0.0.1:8000/health)" = '{"status":"ok"}'
+
+          echo "== /jobs serves real rows from the mounted volume =="
+          total=$(curl -fsS 'http://127.0.0.1:8000/jobs?limit=2' \
+                  | python3 -c 'import json,sys; print(json.load(sys.stdin)["total"])')
+          test "$total" = "5"
+
+          echo "== bad input is still rejected in the image =="
+          code=$(curl -s -o /dev/null -w '%{http_code}' 'http://127.0.0.1:8000/jobs?limit=0')
+          test "$code" = "422"
+
+          echo "== the container is not running as root =="
+          test "$(docker exec api id -u)" = "1001"
+
+          # A plain read-write connect from inside the container, so this
+          # proves the *mount* refuses writes independently of the app's own
+          # mode=ro guard. Written as shell because a python -c body indented
+          # to match the YAML block would be an IndentationError.
+          echo "== the database really is read-only to the container =="
+          if docker exec api python -c \
+               "import sqlite3; sqlite3.connect('/data/jobs.db').execute('DELETE FROM jobs')"; then
+            echo "a write SUCCEEDED against a read-only mount"; exit 1
+          fi
+          echo "write refused, as required"
+
+      # The logs are the artefact worth seeing when any of the above fails.
+      - name: Container logs
+        if: always()
+        run: docker logs api || true

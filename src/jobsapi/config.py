@@ -26,8 +26,13 @@ class Settings(BaseSettings):
     # which is transient and becomes a 503 -- never a hang.
     busy_timeout_ms: int = Field(default=5_000, ge=0)
 
-    default_page_size: int = Field(default=20, ge=1)
-    max_page_size: int = Field(default=100, ge=1)
+    # There is deliberately no `max_page_size` setting. The 1..100 bound on
+    # `limit` is part of the *published contract*: it is compiled into
+    # `Pagination` as a Field constraint, so `/openapi.json` states it and a
+    # generated client enforces it. An env var could set a deployment's real
+    # bound to something the schema does not say, which would make the docs
+    # lie — and "the docs are generated from the types" is the property this
+    # build is built on. The bound lives in `schemas.py` as a constant.
 
     log_level: str = "INFO"
 

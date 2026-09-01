@@ -7,7 +7,9 @@ and their reasoning are recorded below.
 
 ## Measured facts about the source dataset
 
-Taken 2026-09-01 from `~/code/job-listing-scraper/data/jobs.db`, read-only.
+Taken 2026-09-01 **at Phase 0** from `~/code/job-listing-scraper/data/jobs.db`,
+read-only. The figures below are a snapshot and are left as measured — the
+decisions they justify were made against them.
 
 | Fact | Value | Why it matters here |
 | ---- | ----- | ------------------- |
@@ -20,6 +22,20 @@ Taken 2026-09-01 from `~/code/job-listing-scraper/data/jobs.db`, read-only.
 | `remote` NULL | all `greenhouse:*` sources; never on `arbeitnow` | Tri-state filter is not decoration — NULL is the majority case for most sources |
 | `posted_at` NULL | 0 rows | Today. The schema still permits NULL, so the code must not assume otherwise |
 | Distinct sources | 8 (`arbeitnow`, `greenhouse:{airtable,anthropic,discord,duolingo,figma,gitlab}`, `python_org`) | The `source` filter enum has to come from the data, not a hardcoded list that rots |
+
+**Re-measured at Phase 6, same day, after the scraper ran again:** file 64 MB;
+jobs 3,498 · runs 63 · job_observations 12,052 · job_changes 3,592; `description`
+avg 5.4 KB, max 33 KB (~19.3 MB); `currency` NULL 2,170 / 3,498; `salary_min`
+NULL 70.4%; `job_changes` values 36.1 MB with a single value of 30,646
+characters.
+
+The absolute numbers moved by roughly 13% in a day. **The proportions did not**
+— `salary_min` NULL went 69% → 70.4%, and every decision in this document rests
+on a proportion or on a mechanism, not on a row count. That is the reason to
+prefer "NULL in ~70% of rows, so the filter's NULL behaviour must be documented"
+over "3,105 rows": the first survives the data growing and the second is stale
+the next time the scraper runs. Figures quoted anywhere in `docs/` are snapshots
+and carry the date they were taken.
 
 ---
 
