@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from jobsapi.config import Settings
+from jobsapi.config import Settings, get_settings
 from jobsapi.main import create_app
 
 # Mirrors Build 2's schema. Copied rather than imported: this service is a
@@ -176,6 +176,28 @@ def build_database(path: Path, rows: list[tuple] | None = None) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+@pytest.fixture(autouse=True)
+def _never_the_real_database(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> Iterator[None]:
+    """No test may reach the developer's real jobs.db, even by accident.
+
+    Autouse and unconditional. Without it, a test that forgets to inject
+    `Settings` silently falls back to `get_settings()` and the default path —
+    which passes on a machine where the scraper's database happens to exist and
+    fails everywhere else. That is exactly how Phase 1's tests broke when the
+    Phase 2 startup check landed: green locally, red on CI, for a reason that had
+    nothing to do with the code under test.
+
+    Pointing the environment at a path that cannot exist turns that mistake into
+    an immediate, obvious failure instead of a machine-dependent one.
+    """
+    monkeypatch.setenv("JOBSAPI_DB_PATH", str(tmp_path / "must-be-injected.db"))
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 @pytest.fixture

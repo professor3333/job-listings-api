@@ -2,10 +2,8 @@
 
 from fastapi.testclient import TestClient
 
-from jobsapi.main import create_app
 
-
-def test_health_returns_ok() -> None:
+def test_health_returns_ok(client: TestClient) -> None:
     """The happy path, asserted on the exact body rather than just the status.
 
     `TestClient` speaks to the ASGI app in-process — no socket, no port, no
@@ -15,15 +13,14 @@ def test_health_returns_ok() -> None:
     runs at startup), and a test that skips them would not exercise the same
     code path the real server does.
     """
-    with TestClient(create_app()) as client:
-        response = client.get("/health")
+    response = client.get("/health")
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
     assert response.headers["content-type"] == "application/json"
 
 
-def test_health_is_declared_in_the_openapi_schema() -> None:
+def test_health_is_declared_in_the_openapi_schema(client: TestClient) -> None:
     """The generated docs are only as correct as the type hints that produce them.
 
     /docs is rendered from /openapi.json, which FastAPI derives from the route
@@ -32,8 +29,7 @@ def test_health_is_declared_in_the_openapi_schema() -> None:
     loosening `Literal["ok"]` to `str` — fails a test instead of silently
     publishing a wrong promise to every reader of /docs.
     """
-    with TestClient(create_app()) as client:
-        schema = client.get("/openapi.json").json()
+    schema = client.get("/openapi.json").json()
 
     health = schema["paths"]["/health"]["get"]
     ref = health["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]

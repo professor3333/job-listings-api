@@ -63,6 +63,11 @@ Format: `- YYYY-MM-DD — the concept — where it came up`
   into `create_app` puts the seam somewhere that governs both. — Phase 2,
   `main.py`.
 
+- 2026-09-01 — **`TestClient` as a context manager runs the lifespan**, so any
+  startup check becomes a dependency of every test that uses it. Adding a
+  lifespan check retroactively broke Phase 1's tests, which had been constructing
+  an app with default settings. See DEBUGGING.md. — Phase 2.
+
 ---
 
 ## AI-WRITTEN register
