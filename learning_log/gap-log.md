@@ -143,13 +143,13 @@ list only once it has been written up in `learning-log.md`.
 
 | Date | File | Concept to re-derive | Written up? |
 | ---- | ---- | -------------------- | ----------- |
-| 2026-09-01 | `pyproject.toml` | Why a `src/` layout needs a build backend at all, and what `uv sync` installs the project *as* (editable wheel, not a path on `sys.path`) | ☐ |
-| 2026-09-01 | `.gitignore` | Why `data/` and `*.db` are ignored in a repo whose whole job is reading a database | ☐ |
+| 2026-09-01 | `pyproject.toml` | Why a `src/` layout needs a build backend at all, and what `uv sync` installs the project *as* — a `.pth` pointing at `src/` **plus** dist-info metadata (the original note had this backwards; `--no-editable` is what copies the package) | | ☑ |
+| 2026-09-01 | `.gitignore` | Why `data/` and `*.db` are ignored in a repo whose whole job is reading a database | | ☑ |
 | 2026-09-01 | `docs/design.md` | Both Phase 0 decisions and the measurements behind them: `mode=ro` + path-not-policy config, and why WAL is *declined* rather than deferred | ☑ |
 | 2026-09-01 | `src/jobsapi/main.py` | Why an app *factory* rather than a module-level singleton, and what `include_router` does that the `@router.get` decorator did not | ☑ |
 | 2026-09-01 | `src/jobsapi/routers/meta.py` | Why `/health` is `async def` while every sqlite3 endpoint must be plain `def` — the rule is about what the body does, not house style | ☑ |
 | 2026-09-01 | `tests/test_health.py` | Why `TestClient` is used as a context manager (lifespan events), and why the OpenAPI schema is asserted on rather than trusted | ☑ |
-| 2026-09-01 | `.github/workflows/ci.yml` | What `uv sync --locked` refuses to do, and why CI having no network and no `jobs.db` is the point rather than a limitation | ☐ |
+| 2026-09-01 | `.github/workflows/ci.yml` | What `uv sync --locked` refuses to do, and why CI having no network and no `jobs.db` is the point rather than a limitation | | ☑ |
 | 2026-09-01 | `src/jobsapi/config.py` | Why the DB location is a *path, not a policy*, and why `get_settings` is cached but tests never call it | ☑ |
 | 2026-09-01 | `src/jobsapi/db.py` | Why `mode=ro` must be a URI (a plain connect *creates* a missing file), why `check_same_thread=False` is safe per-request but not globally, and why a generator dependency guarantees close | ☑ |
 | 2026-09-01 | `src/jobsapi/errors.py` | Why the repository raises `JobNotFound` and not `HTTPException`, and why BUSY and READONLY_ROLLBACK are two classes rather than one | ☑ |
@@ -162,13 +162,13 @@ list only once it has been written up in `learning-log.md`.
 | 2026-09-01 | `src/jobsapi/repository.py` (Phase 3) | The clauses+params list pattern that makes an eleventh filter one `if` rather than a combinatorial explosion | ☑ |
 | 2026-09-01 | `docs/api.md` | The three arguable decisions: NULLs never satisfy a filter, unknown params are rejected, `sort` is an allowlist | ☑ |
 | 2026-09-01 | `src/jobsapi/logging_config.py` | Why a ContextVar carries the request id where a parameter cannot, and why logs go to stdout rather than a file | ☑ |
-| 2026-09-01 | `src/jobsapi/repository.py` (Phase 5) | Why `substr()` belongs in the query and not in the response model, and why `/sources` needs a LEFT JOIN | ☐ |
-| 2026-09-01 | `src/jobsapi/routers/runs.py` | Why `RunSummary` deliberately has no `duration_seconds` | ☐ |
-| 2026-09-01 | `Dockerfile` | Why the build toolchain lives in a stage that never ships, why the database is a volume and not a layer, and why exec-form CMD matters for SIGTERM | ☐ |
-| 2026-09-01 | `.dockerignore` | Why a build context that *could* contain a database is a problem even when no COPY references it | ☐ |
-| 2026-09-01 | `scripts/make_demo_db.py` | Why a reader-only service ships a schema-creating script at all, and why it is stdlib-only | ☐ |
-| 2026-09-01 | `.github/workflows/ci.yml` (docker job) | Why the Dockerfile is verified by querying a running container rather than by a successful build | ☐ |
-| 2026-09-01 | `README.md` | Why every documented command was executed before being written down | ☐ |
+| 2026-09-01 | `src/jobsapi/repository.py` (Phase 5) | Why `substr()` belongs in the query and not in the response model, and why `/sources` needs a LEFT JOIN | | ☑ |
+| 2026-09-01 | `src/jobsapi/routers/runs.py` | Why `RunSummary` deliberately has no `duration_seconds` — `finished_at == started_at` in 62 of 63 finished runs, not all of them, which makes a computed duration *plausible* rather than obviously broken | | ☑ |
+| 2026-09-01 | `Dockerfile` | Why the build toolchain lives in a stage that never ships, why the database is a volume and not a layer, and why exec-form CMD matters for SIGTERM | | ☑ |
+| 2026-09-01 | `.dockerignore` | Why a build context that *could* contain a database is a problem even when no COPY references it | | ☑ |
+| 2026-09-01 | `scripts/make_demo_db.py` | Why a reader-only service ships a schema-creating script at all, and why it is stdlib-only | | ☑ |
+| 2026-09-01 | `.github/workflows/ci.yml` (docker job) | Why the Dockerfile is verified by querying a running container rather than by a successful build | | ☑ |
+| 2026-09-01 | `README.md` | Why every documented command was executed before being written down | | ☑ |
 
 ---
 

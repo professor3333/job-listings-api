@@ -289,10 +289,13 @@ class RunSummary(BaseModel):
     """One scrape run.
 
     Deliberately carries no `duration_seconds`. Build 2 stamps `finished_at`
-    from the same value as `started_at`, so every completed run reports zero
-    elapsed. Computing a duration here would publish a confidently wrong number;
-    the two timestamps are exposed raw so a client can see for itself. Filed as
-    a Build 2 bug, not worked around here.
+    from the same value as `started_at` on the success path — equal in 62 of 63
+    finished runs, the exception being a `failed` run with a real 3.9s duration.
+    A computed field would therefore read 0.0 for every successful run and
+    plausibly non-zero for a failed one: not obviously broken, just quietly
+    wrong, which is the harder kind to notice. The two timestamps are exposed
+    raw so a client can see the equality itself. Filed as a Build 2 bug, not
+    worked around here.
     """
 
     id: int

@@ -529,3 +529,304 @@ that it never established the fact, and collapsing it to `false` would invent
 data. 1,129 of 3,105 rows are in that state. Two fields, two opposite treatments
 of NULL, both documented: which is the point. The dataset does not tell you what
 NULL means; the contract does.
+
+---
+
+# Part 3 — The register: the concept behind each file
+
+The AI-WRITTEN register in `gap-log.md` carries a one-line concept per file, and
+an entry leaves that list only once the concept is written up here. This part
+closes the remaining ten. Each claim below was checked against the machine
+rather than recalled — two of the one-liners turned out to be wrong, and both
+corrections are recorded in place.
+
+## `pyproject.toml` — the `src/` layout, and what `uv sync` actually installs
+
+**Correction first.** The register's one-liner said `uv sync` installs the
+project as an "editable wheel, **not** a path on `sys.path`". That is backwards.
+Inspecting the venv:
+
+```
+.venv/lib/python3.13/site-packages/jobsapi.pth          -> /…/job-listings-api/src
+.venv/lib/python3.13/site-packages/jobsapi-0.6.0.dist-info/
+    direct_url.json -> {"url": "file:///…", "dir_info": {"editable": true}}
+```
+
+It is *precisely* a path on `sys.path` — a `.pth` file containing the absolute
+path to `src/`, which Python appends at interpreter start. `import jobsapi`
+resolves to `…/job-listings-api/src/jobsapi/__init__.py`: the working tree, so an
+edit takes effect with no reinstall.
+
+**Why a build backend is needed at all.** With a `src/` layout the package is not
+in the current directory, so it is not importable by accident. That is the point:
+`pytest` run from the repo root cannot pick up `src/jobsapi` implicitly, which is
+what makes `ModuleNotFoundError: No module named 'jobsapi'` the *correct* first
+result and the install step a real one. `[build-system] requires = ["uv_build"]`
+declares who turns this directory into an installable distribution;
+`uv sync` runs it.
+
+**The half of the one-liner that was right** is that this is not merely
+`PYTHONPATH=src`. There is a `dist-info` directory alongside the `.pth`, so
+`jobsapi` is a *recorded distribution* with a version and metadata, discoverable
+by `importlib.metadata` and uninstallable as a unit. A bare `PYTHONPATH` gives
+imports without any of that.
+
+**And the distinction has a consumer.** The Dockerfile runs
+`uv sync --locked --no-dev --no-editable`, which produces the other shape
+entirely. Verified in a clean clone:
+
+```
+site-packages/jobsapi/          <- the package, copied
+direct_url.json -> {"dir_info": {"editable": false}}
+no jobsapi.pth
+import jobsapi -> …/site-packages/jobsapi/__init__.py
+```
+
+That is what lets the runtime stage copy `/app/.venv` and leave the source tree
+behind. Editable for development because an edit should take effect immediately;
+non-editable for the image because a `.pth` pointing at a build-stage path would
+be a dangling reference in the final container.
+
+## `.gitignore` — ignoring `*.db` in a repo whose whole job is reading a database
+
+Three independent reasons, only the first of which is about size.
+
+**It is not this repository's data.** Build 2 owns the database. Committing it
+would create a second copy of the truth that drifts from the first the next time
+the scraper runs, and `docs/design.md` rejected the snapshot approach for exactly
+that reason. The path is configuration; the file is somebody else's.
+
+**Git cannot store it usefully.** A 64 MB SQLite file is a binary blob that
+changes throughout on every write, so each commit stores a fresh copy forever.
+The current `.git` is **1.0 MB**. Two committed snapshots would make the clone
+120× larger permanently, because history cannot be shrunk by a later deletion.
+
+**It contains someone else's copyrighted text.** Full job descriptions —
+19.3 MB of them — are the employers' words, and Build 2's own statement keeps
+them local. A public repository is publication.
+
+The rule is enforced rather than remembered: `data/`, `*.db`, `*.db-wal` and
+`*.db-shm` are all ignored, checked directly —
+
+```
+data/demo.db  -> .gitignore:21:data/     foo.db      -> .gitignore:22:*.db
+data/jobs.db  -> .gitignore:21:data/     foo.db-wal  -> .gitignore:23:*.db-wal
+```
+
+— and `git log --all -- '*.db' data/` returns nothing, so no database has ever
+been committed at any point in this repository's history. `.dockerignore`
+repeats the same four patterns for the same reason, one layer out.
+
+## `.github/workflows/ci.yml` (the `check` job) — what `--locked` refuses
+
+`uv sync --locked` **fails rather than re-resolving** when `uv.lock` and
+`pyproject.toml` disagree. Demonstrated by loosening one bound in a throwaway
+clone:
+
+```
+$ uv sync --locked --all-groups
+Resolved 32 packages in 300ms
+error: The lockfile at `uv.lock` needs to be updated, but `--locked` was provided.
+hint: To update the lockfile, run `uv lock`.
+```
+
+Plain `uv sync` would have quietly updated the lockfile and installed a different
+dependency set than the one tested locally. In CI that is the whole ballgame: a
+green run against silently re-resolved dependencies is a green run for a
+configuration nobody has. `--locked` converts "CI resolved something slightly
+different" from an invisible event into a build failure with the fix in the
+message.
+
+**Why no network and no `jobs.db` on the runner is the point.** A CI runner is
+the only environment guaranteed not to have the developer's conveniences, which
+makes it the standing proof of two Definition-of-Done lines: that `pytest` is
+green with the wifi off, and green with `jobs.db` deleted. This is not
+hypothetical — it is exactly how the Phase 1 tests were caught depending on the
+developer's filesystem (Part 1, entry 4). The runner did not cause that bug; it
+was the only place that could see it.
+
+## `.github/workflows/ci.yml` (the `docker` job) — verifying by querying, not by building
+
+A successful `docker build` proves the Dockerfile parses and its commands exit 0.
+It proves nothing about whether the resulting container *serves*. The gap between
+those two is where the interesting failures live: a wrong `CMD`, a `PATH` that
+does not reach the venv, a `USER` that cannot read the mounted file, an
+`ENV` default pointing somewhere nothing is mounted.
+
+So the job builds the image and then interrogates a running container: `/health`
+answers; `/jobs` returns rows **from the mounted volume**; `?limit=0` is still a
+422 inside the image; `id -u` is 1001; and a write against `/data/jobs.db` is
+refused.
+
+That last assertion is the one worth explaining. It opens a *plain read-write*
+`sqlite3` connection from inside the container rather than asking the API,
+because the API has no write path — that is the entire premise of the build — so
+asking it would prove nothing about the mount. The application's own guarantee
+is already doubly enforced in code (`mode=ro` on the URI, `PRAGMA query_only`);
+this tests the layer *underneath* both. Delete `:ro` from the documented
+`docker run` and every application-level assertion still passes while this one
+fails.
+
+The job exists because this machine has no container runtime at all, so the
+image cannot be built where it was written. That is a limitation, but the
+substitute is not a lesser check: it runs on every push, and it verifies
+behaviour a local `docker build` never would have.
+
+## `Dockerfile` — three decisions
+
+**The build toolchain lives in a stage that never ships.** The builder needs
+`uv`, the lockfile and the source; the runtime needs an interpreter and a
+virtualenv. Only `/app/.venv` crosses the `COPY --from=builder` boundary. The
+size argument is real, but the better one is that a compiler, a package manager
+and a lockfile which are *not in the image* cannot be used by anything that later
+gets into the image.
+
+**The database is a volume, never a layer.** Baking a 64 MB snapshot in would
+make the image stale the moment the scraper next runs, would put employers'
+copyrighted description text into an artefact that gets pushed to a registry, and
+would contradict Decision 1's "a path, not a policy". `ENV JOBSAPI_DB_PATH=/data/jobs.db`
+expresses that as a default, so `-v …/data:/data:ro` is all a user supplies.
+
+**Exec-form `CMD`.** `CMD ["uvicorn", …]` makes uvicorn PID 1, so it receives
+`SIGTERM` from `docker stop` and shuts down gracefully. The shell form
+(`CMD uvicorn …`) puts `/bin/sh` at PID 1, and sh does not forward signals to its
+child — the container would hit the 10-second timeout and be `SIGKILL`ed on every
+single stop. The failure is invisible in development and shows up as dropped
+in-flight requests on every deploy.
+
+Two smaller ones with the same character. `PYTHONUNBUFFERED=1`, because Python
+block-buffers stdout when it is not a tty — which is exactly the container case —
+so without it the structured log lines this service is careful to emit would sit
+in a buffer instead of reaching the log collector. And the healthcheck uses
+`urllib` rather than `curl`, because the slim image has no curl and installing
+one would be a package that exists solely to be a dependency of the healthcheck.
+
+## `.dockerignore` — why a build context matters even when no `COPY` references it
+
+The entire build context is uploaded to the daemon *before* any instruction runs.
+A 64 MB database in `data/` would be transferred on every build even though no
+`COPY` mentions it — pure latency, repeated.
+
+The sharper reason is the failure mode. This Dockerfile copies specific paths, so
+today a stray database could not enter a layer. But `COPY . .` is the single most
+common Dockerfile edit anyone makes, and the moment someone writes it, the
+database is baked into the image and pushed to a registry with no error anywhere.
+`.dockerignore` makes that edit safe in advance rather than relying on whoever
+makes it noticing. It repeats `.gitignore`'s four database patterns for exactly
+this reason: the two files answer the same question about two different
+publication channels.
+
+## `scripts/make_demo_db.py` — why a reader ships a schema-creating script
+
+The service is a reader and does not own the schema, so a script that *creates*
+tables looks like a boundary violation. It is not one, because nothing in
+`src/jobsapi/` imports it and no code path in the service can reach it. It is a
+fixture generator that happens to live in the repository.
+
+It exists because **without it neither audience can run the service at all.** A
+stranger who clones this repo has no `jobs.db`; a CI runner has no scraper. The
+alternative is a README whose first instruction is "obtain a 64 MB database from
+another project", which makes the quickstart untestable and the container smoke
+test impossible.
+
+**Stdlib-only** because both callers precede an install: CI runs it with the
+runner's bare `python3` before the image even starts. A dependency would make the
+fallback require the thing it is a fallback for.
+
+**The schema is copied, not imported**, for the same reason `tests/conftest.py`
+copies it: importing `jobscrape` would couple two deliberately separate
+repositories, and Build 3 would then fail to build whenever Build 2's package did.
+The copy is not trusted to stay correct — `db.verify_schema` compares the real
+database's columns at startup, so drift is a loud refusal to start rather than a
+silently wrong answer.
+
+The rows are chosen to be awkward on purpose: a null salary, a null `remote`, a
+unicode company, an apostrophe and a literal `%` in a title, a null `posted_at`.
+A demo built from five tidy rows would demonstrate none of the decisions this
+build spent its time on.
+
+## `src/jobsapi/repository.py` (Phase 5) — `substr()` in SQL, and the LEFT JOIN
+
+**Truncating in SQL rather than in the response model.** The response model runs
+*after* the data has been read, so filtering there still pays to pull every byte
+off disk and into Python. Measured across the whole `job_changes` table:
+
+| | bytes into Python | wall time |
+| --- | --- | --- |
+| raw `old_value, new_value` | **36.2 MB** | 40.0 ms |
+| `substr(…, 1, 200)` + `length(…)` | **1.32 MB** | 46.7 ms |
+
+**Note what this does and does not buy.** It is a 27× reduction in bytes crossing
+the boundary and *not* a speed win — the `substr` version is marginally slower in
+wall time, because SQLite still reads the pages and now does per-row work as
+well. The win is memory and payload, which is the thing that scales with
+concurrency: 36 MB of Python string objects per request is what falls over with
+ten callers, not 6 ms of CPU. Claiming this as an optimisation for *speed* would
+have been wrong, and measuring is what showed it.
+
+Per request the effect is starker. The worst single job today is id 88, whose
+four changes hold **187.9 KiB** of raw values and serialise to **1.8 KiB** — with
+`old_length`/`new_length` reporting the true sizes and `truncated: true` saying
+that something was cut, so nothing is hidden from the client.
+
+**Why `/sources` needs a LEFT JOIN.** It counts jobs per source and attaches the
+outcome of that source's most recent run. An inner join would drop any source
+missing either side — a source with jobs but no run row, or a run row but no jobs
+— and the row would simply vanish, which for an endpoint whose job is *inventory*
+is the worst possible failure: silent under-reporting that looks like a complete
+answer.
+
+**Honest caveat:** neither case exists in the data today. All eight sources appear
+in both tables, so the LEFT JOIN is currently indistinguishable from an inner
+join at runtime. It is defensive, not load-bearing — and worth keeping, because
+the situations it guards are ordinary (a scrape that starts and writes no rows; a
+source retired from the scraper while its jobs remain), and the cost of being
+wrong is a missing row rather than an error.
+
+## `src/jobsapi/routers/runs.py` — why `RunSummary` has no `duration_seconds`
+
+Both timestamps are present, so the subtraction is available and obvious. It is
+omitted because Build 2 writes `finished_at` from the same value as `started_at`,
+making the result 0.0 for essentially every run.
+
+**A correction to the register's one-liner, which said "every completed run".**
+Measured: `finished_at == started_at` in **62 of 63** finished runs. The
+exception is run 55 — `status: "failed"`, started `03:45:08.131882`, finished
+`03:45:12`, a real 3.9-second duration. So the bug is in the *success* path only;
+the failure path stamps a genuine timestamp.
+
+That refinement makes the case for omitting the field stronger, not weaker. A
+uniformly zero column is obviously broken and a client would distrust it
+immediately. A column that reads 0.0 for every successful run and 3.9 for a
+failed one looks *plausible* — it invites the conclusion that successful scrapes
+are instantaneous, which is false and unfalsifiable from the API. Publishing a
+confidently wrong number is worse than publishing none, because a wrong number
+suppresses the question.
+
+So both timestamps are returned raw and the client can see the equality itself.
+The fix belongs in Build 2, which owns the write path; this service is a reader
+and does not launder its source's bugs.
+
+## `README.md` — why every documented command was executed before being written
+
+Because documentation is the one artefact with no test. `pytest` covers the code
+and CI covers the build, but nothing anywhere fails when a README says
+`--port 8080` and the app listens on 8000. It rots silently and is read first —
+by the person least able to tell that it is wrong.
+
+So every command in it was run, and every example request was issued against a
+live server: the demo-database build, the `uvicorn` invocation, all nine `curl`s,
+`/docs` and `/openapi.json`, the two `pytest` variants, and the lint pair. Then
+the whole thing again from a clean clone, which is the only way to catch a step
+that works solely because of state already sitting on the development machine.
+
+**This was not ceremony — it found two real defects.** `Settings` carried
+`default_page_size` and `max_page_size` that nothing read, so
+`JOBSAPI_MAX_PAGE_SIZE=500` did precisely nothing; and `pyproject.toml` said
+version `0.1.0` while the running app reported `0.5.0`. Neither is the kind of
+bug a test catches, because nothing *fails* when a setting is ignored or a
+version string disagrees. Both were found by the act of writing down what was
+true and then checking. The dead settings were removed rather than implemented,
+since the `1..100` bound is a `Field` constraint that `/openapi.json` publishes —
+making it configurable would let a deployment's real limit differ from what its
+own docs promise.
