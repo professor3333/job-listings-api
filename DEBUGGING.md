@@ -12,6 +12,35 @@ Significant failures only. Newest entry at the top.
 
 ---
 
+## 2026-09-01 — The write path created a database in the developer's home directory, and every test passed
+
+- **Problem:** after `appdb.ensure_schema` was added to the lifespan, `uv run
+  pytest` reported **153 passed** — and left a real 24 KB SQLite database at
+  `~/.local/share/jobsapi/app.db`. No test failed, nothing was logged, and
+  nothing in the output mentioned it. It was found by looking for it, not by a
+  failure.
+- **Root cause:** the autouse `_never_the_real_database` fixture points
+  `JOBSAPI_DB_PATH` at a path that cannot exist, but it knew nothing about the
+  new `JOBSAPI_APP_DB_PATH`, and the `settings` fixture overrode only `db_path`.
+  So every `TestClient` ran the lifespan against the *default* application
+  database path. The asymmetry is what hid it: the read path is designed to fail
+  loudly when its file is missing — that is exactly what `check_database` is for
+  — while the write path is *specified* to create what is missing. The identical
+  mistake that turned Phase 1's suite red turned this one green.
+- **Solution:** `tests/conftest.py` — `_never_the_real_database` now also points
+  `JOBSAPI_APP_DB_PATH` into `tmp_path` and clears `JOBSAPI_API_KEY`; a new
+  `app_db_path` fixture feeds the `settings` fixture, so every test gets its own
+  file and the lifespan creates it there.
+- **Lesson:** a guard against ambient resources is not written once. Every new
+  ambient resource needs adding to it, and a resource the code *writes* is more
+  dangerous than one it reads, because the failure mode is silent success. "The
+  suite passes" says nothing about what the suite did to the machine — for a
+  write path the question is not "did anything fail" but "what exists now that
+  did not exist before". Verified by deleting the directory and re-running: it
+  stays absent.
+
+---
+
 ## 2026-09-01 — Phase 1 tests passed locally only because the real database existed
 
 - **Problem:** `pytest` was green locally and failed on GitHub Actions with

@@ -24,6 +24,102 @@ The viva follows the entries, in Part 2.
 
 # Part 1 — Entries
 
+## 2026-09-01 — A write path made the test suite pollute the developer's machine, silently
+
+- **What broke:** `pytest` reported 153 passed and created a real database at
+  `~/.local/share/jobsapi/app.db`. Nothing failed; nothing said so.
+- **Why it happened:** the autouse fixture that points `JOBSAPI_DB_PATH` at an
+  impossible path — written in Phase 2 precisely to stop tests reaching ambient
+  state — knew nothing about `JOBSAPI_APP_DB_PATH`, added in Phase 4. Every
+  `TestClient` therefore ran the lifespan against the default application
+  database path.
+- **What it teaches:** the same class of bug as Part 1 entry 4, inverted, and the
+  inversion is the lesson. A read path that reaches ambient state **fails**
+  when the resource is absent, which is how Phase 1's version was caught. A
+  write path *creates* what is absent, so it succeeds — and a green suite is not
+  evidence of anything. For code that writes, the question is not "did a test
+  fail" but "what exists now that did not exist before". A guard against ambient
+  resources also has to be *extended* whenever a new one is introduced; it is not
+  written once.
+- **Where it was applied:** `tests/conftest.py` — `_never_the_real_database` now
+  redirects `JOBSAPI_APP_DB_PATH` into `tmp_path` and clears `JOBSAPI_API_KEY`;
+  a new `app_db_path` fixture feeds `settings`.
+- **How to detect it next time:** after adding any write, delete whatever the
+  code could have created, run the suite, and look at the filesystem rather than
+  the exit code. `ls` is the assertion that no test was going to make.
+
+## 2026-09-01 — The obvious way to write a PATCH endpoint silently destroys data
+
+- **What broke:** *Designed out.* Left alone, `PATCH {"name": "x"}` would have
+  wiped the resource's `description` and returned `200`.
+- **Why it happens:** a partial-update model has every field optional, so each
+  one defaults to `None`. `model_dump()` then emits `{"name": "x",
+  "description": None}` — indistinguishable from a client that explicitly asked
+  to clear the description. The endpoint writes both columns and the data is
+  gone, with a success status and nothing in any log.
+- **What it teaches:** for a partial update, "absent" and "explicitly null" are
+  two different instructions, and a plain `str | None = None` cannot represent
+  the difference. Pydantic keeps the distinction in `model_fields_set`, which
+  records the keys the client actually sent; `model_dump(exclude_unset=True)` is
+  what surfaces it. This is also the sharpest illustration of why `PUT` and
+  `PATCH` need *different request models* rather than one with everything
+  optional: for `PUT`, an omitted field genuinely does mean "clear it", and the
+  same model cannot mean both.
+- **Where it was applied:** `WatchlistPatch` versus `WatchlistReplace` in
+  `schemas.py`; `patch_watchlist` in `routers/watchlists.py` passes
+  `model_dump(exclude_unset=True)` to a repository that builds its SET clause
+  from the keys present. Empty patches are a 422 rather than a no-op 200.
+- **How to detect it next time:** the test is not "does PATCH change the field I
+  sent" — that passes either way. It is "does PATCH leave the field I did *not*
+  send alone", and it needs a resource with two populated fields to be visible
+  at all.
+
+## 2026-09-01 — Check-then-insert is a race the database is there to settle
+
+- **What broke:** *Designed out.* `SELECT` for the name, and `INSERT` if nothing
+  came back, is the obvious way to produce a 409 — and two concurrent requests
+  can both find nothing and both insert.
+- **Why it happens:** the check and the write are two statements with a gap
+  between them, and nothing holds a lock across it. The window is small and
+  therefore the bug is rare, intermittent, and impossible to reproduce on
+  demand — the worst combination. Under SQLite's default isolation the duplicate
+  simply lands.
+- **What it teaches:** uniqueness is the database's job because the database is
+  the only participant that can serialise the decision. The correct shape is to
+  attempt the write and translate the constraint violation:
+  `sqlite3.IntegrityError` becomes a domain `DuplicateResource`, which the
+  handler turns into a 409. The translation must be **narrow** — matching the
+  specific constraint — or a genuine bug in the module's own SQL gets reported
+  to the client as a conflict it can do nothing about.
+- **Where it was applied:** `create_watchlist`, `replace_watchlist`,
+  `update_watchlist` and `add_item` in `watchlist_repository.py`, each checking
+  which constraint failed before deciding between 409, 404 and re-raising.
+- **How to detect it next time:** any `SELECT` whose only purpose is to decide
+  whether a following `INSERT` is allowed. If a constraint could enforce the
+  same rule, the `SELECT` is a race wearing a check's clothing.
+
+## 2026-09-01 — SQLite ignores foreign keys unless every connection asks for them
+
+- **What broke:** *Designed out.* `ON DELETE CASCADE` in the schema does nothing
+  by default: deleting a watchlist would leave its items behind as orphans, with
+  no error anywhere.
+- **Why it happens:** SQLite ships with foreign key enforcement **off** for
+  backwards compatibility, and it is a per-*connection* setting, not a property
+  of the file. So the constraint is parsed and stored and then not enforced —
+  the schema looks correct under inspection and behaves as though the clause
+  were a comment.
+- **What it teaches:** a declared constraint is not an enforced one, and the
+  difference here is a single `PRAGMA` that has to be on *every* connection the
+  application opens. It generalises: a database's defaults are part of its
+  contract, and the ones chosen for backwards compatibility are exactly the ones
+  that will surprise you.
+- **Where it was applied:** `PRAGMA foreign_keys = ON` in `appdb.connect`, which
+  is why the cascade in `delete_watchlist` works at all.
+- **How to detect it next time:** test the cascade against the *database*, not
+  the API. `test_cascade_really_deleted_the_rows` opens the file afterwards and
+  counts rows — an API-level check would have passed anyway, because the orphans
+  are invisible through an endpoint that filters by watchlist id.
+
 ## 2026-09-01 — The recorded answer to "what does `include_router` do" was true of an older FastAPI
 
 - **What broke:** Nothing in the service — a *record* broke. Phase 1's

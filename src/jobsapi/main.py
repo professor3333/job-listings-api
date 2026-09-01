@@ -10,11 +10,12 @@ from uuid import uuid4
 
 from fastapi import FastAPI, Request, Response
 
+from jobsapi.appdb import ensure_schema
 from jobsapi.config import Settings, get_settings
 from jobsapi.db import check_database
 from jobsapi.logging_config import configure_logging, request_id_var
 from jobsapi.problems import PROBLEM_MEDIA_TYPE, register_handlers
-from jobsapi.routers import jobs, meta, runs
+from jobsapi.routers import jobs, meta, runs, watchlists
 from jobsapi.schemas import Problem
 
 # Declared once, app-wide, so /openapi.json advertises the problem shape instead
@@ -27,9 +28,19 @@ PROBLEM_RESPONSES: dict[int | str, dict] = {
         "description": "Validation failed.",
         "content": {PROBLEM_MEDIA_TYPE: {}},
     },
+    401: {
+        "model": Problem,
+        "description": "A valid X-API-Key header is required.",
+        "content": {PROBLEM_MEDIA_TYPE: {}},
+    },
     404: {
         "model": Problem,
         "description": "Resource not found.",
+        "content": {PROBLEM_MEDIA_TYPE: {}},
+    },
+    409: {
+        "model": Problem,
+        "description": "The request conflicts with the current state.",
         "content": {PROBLEM_MEDIA_TYPE: {}},
     },
     503: {
@@ -59,9 +70,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     settings: Settings = app.state.settings
     check_database(settings)
+
+    # The read database must already exist and is only verified; the write
+    # database is created if absent, because this service owns it. Doing it here
+    # rather than lazily means the first write never races the first request.
+    ensure_schema(settings)
     _log.info(
         "startup",
-        extra={"db_path": str(settings.db_path), "version": app.version},
+        extra={
+            "db_path": str(settings.db_path),
+            "app_db_path": str(settings.app_db_path),
+            "api_key_required": settings.api_key is not None,
+            "version": app.version,
+        },
     )
     yield
     _log.info("shutdown")
@@ -78,7 +99,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     """
     app = FastAPI(
         title="Job Listings API",
-        version="0.6.0",
+        version="0.7.0",
         summary="Read-only REST API over the job-listing-scraper dataset.",
         description=(
             "Errors use RFC 9457 problem details "
@@ -135,6 +156,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(meta.router)
     app.include_router(jobs.router)
     app.include_router(runs.router)
+    app.include_router(watchlists.router)
     return app
 
 

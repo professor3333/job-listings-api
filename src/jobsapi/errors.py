@@ -46,3 +46,36 @@ class SchemaContractError(JobsAPIError):
     is the only defence available, and it turns a silent wrong answer into a
     loud refusal to start.
     """
+
+
+class WatchlistNotFound(JobsAPIError):
+    """A watchlist id was well-formed but matched no row."""
+
+    def __init__(self, watchlist_id: int) -> None:
+        self.watchlist_id = watchlist_id
+        super().__init__(f"No watchlist with id {watchlist_id}.")
+
+
+class WatchlistItemNotFound(JobsAPIError):
+    """The watchlist exists; this job is not on it."""
+
+    def __init__(self, watchlist_id: int, job_id: int) -> None:
+        self.watchlist_id = watchlist_id
+        self.job_id = job_id
+        super().__init__(f"Job {job_id} is not on watchlist {watchlist_id}.")
+
+
+class DuplicateResource(JobsAPIError):
+    """A uniqueness constraint refused the write.
+
+    Raised for a 409, and deliberately raised *from* the database's
+    `IntegrityError` rather than from a prior SELECT. Checking first and then
+    inserting is a time-of-check-to-time-of-use race: two concurrent requests
+    can both find nothing and both proceed. The UNIQUE constraint is the only
+    thing that can actually decide, so the code lets it decide and translates
+    the result.
+    """
+
+
+class ApiKeyRequired(JobsAPIError):
+    """A write endpoint was called without a valid key while one is configured."""

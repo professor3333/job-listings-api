@@ -390,3 +390,145 @@ class Problem(BaseModel):
     code: str
     errors: list[ProblemDetail] | None = None
     request_id: str
+
+
+# --------------------------------------------------------------------------
+# Watchlists — the write path (Phase 4)
+# --------------------------------------------------------------------------
+
+# Validating a *body* is a different exercise from validating a query string.
+# Query parameters arrive as strings and are always flat; a body arrives as
+# typed JSON and can nest, so `42` and `"42"` are distinguishable and a client
+# that sends the wrong one is told which. The three models below are also the
+# clearest case in the build of "the input model is not the output model": a
+# client never sends `id`, `created_at` or `item_count`, and cannot set them.
+
+NAME_MIN_LENGTH = 1
+NAME_MAX_LENGTH = 80
+DESCRIPTION_MAX_LENGTH = 500
+NOTE_MAX_LENGTH = 500
+
+WatchlistName = Annotated[
+    str,
+    Field(
+        min_length=NAME_MIN_LENGTH,
+        max_length=NAME_MAX_LENGTH,
+        description="Unique, compared case-insensitively.",
+    ),
+]
+
+
+class WatchlistCreate(BaseModel):
+    """The body of `POST /watchlists`.
+
+    `extra="forbid"` for the same reason the query models use it: a client that
+    sends `{"nmae": "..."}` should be told, not silently given a watchlist
+    called nothing. On a body this matters more than on a query string, because
+    a typo'd field is indistinguishable from an intentionally omitted one.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: WatchlistName
+    description: Annotated[str | None, Field(max_length=DESCRIPTION_MAX_LENGTH)] = None
+
+
+class WatchlistReplace(WatchlistCreate):
+    """The body of `PUT /watchlists/{id}` — a full replacement.
+
+    Identical in shape to the create body, and that is the definition of PUT:
+    the body is the complete new state of the resource. An omitted
+    `description` therefore *clears* it, because the client has described a
+    resource that has none. This is the entire difference from PATCH below, and
+    it is why the two need different models rather than one with everything
+    optional.
+    """
+
+
+class WatchlistPatch(BaseModel):
+    """The body of `PATCH /watchlists/{id}` — a partial update.
+
+    Every field is optional, which creates the problem PUT does not have:
+    "absent" and "explicitly null" are different instructions. `{}` means change
+    nothing; `{"description": null}` means clear the description. A plain
+    `description: str | None = None` cannot tell those apart, so the route reads
+    `model_dump(exclude_unset=True)` and Pydantic's `model_fields_set` — which
+    records the keys the client actually sent — decides what is written.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: WatchlistName | None = None
+    description: Annotated[str | None, Field(max_length=DESCRIPTION_MAX_LENGTH)] = None
+
+    @model_validator(mode="after")
+    def _at_least_one_field(self) -> "WatchlistPatch":
+        """An empty patch is a 422, not a no-op success.
+
+        `PATCH` with `{}` is a request the service cannot act on: it asks for a
+        change and names none. Returning 200 would tell the client its update
+        was applied.
+        """
+        if not self.model_fields_set:
+            raise PydanticCustomError(
+                "empty_patch",
+                "A patch must change at least one field.",
+            )
+        return self
+
+
+class WatchlistItemCreate(BaseModel):
+    """The body of `POST /watchlists/{id}/jobs`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: Annotated[int, Field(ge=1, description="A job id from `GET /jobs`.")]
+    note: Annotated[str | None, Field(max_length=NOTE_MAX_LENGTH)] = None
+
+
+class Watchlist(BaseModel):
+    """A watchlist as the API returns it.
+
+    `id`, `item_count`, `created_at` and `updated_at` are server-owned: they
+    appear here and in none of the request models above, so a client cannot set
+    them and does not have to supply them. Three shapes on purpose, again.
+    """
+
+    id: int
+    name: str
+    description: str | None = None
+    item_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class WatchlistPage(BaseModel):
+    items: list[Watchlist]
+    total: int
+    limit: int
+    offset: int
+
+
+class WatchlistEntry(BaseModel):
+    """One job on a watchlist, with the note that was saved alongside it.
+
+    `job` is nullable, and that is the honest representation of a reference that
+    crosses a database boundary. `watchlist_items.job_id` cannot have a foreign
+    key — the row it points at is in a different file — so a job removed from
+    `jobs.db` leaves an entry pointing at nothing. Rather than hide such an
+    entry or fail the whole request, the item is returned with `job: null` and
+    `job_missing: true`, so a client can see and clean up what it saved.
+    """
+
+    job_id: int
+    note: str | None = None
+    added_at: datetime
+    job: JobSummary | None = None
+    job_missing: bool = False
+
+
+class WatchlistEntryPage(BaseModel):
+    items: list[WatchlistEntry]
+    total: int
+    limit: int
+    offset: int

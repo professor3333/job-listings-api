@@ -134,6 +134,36 @@ Format: `- YYYY-MM-DD — the concept — where it came up`
   states, and an env var that changed the real bound would make the generated
   docs lie. — Phase 6, `config.py`.
 
+- 2026-09-01 — **SQLite foreign keys are OFF by default, per connection.**
+  `ON DELETE CASCADE` is parsed, stored, and then ignored unless every
+  connection issues `PRAGMA foreign_keys = ON`. The schema looks correct under
+  inspection while orphaning rows in practice. — Phase 4, `appdb.py`.
+
+- 2026-09-01 — **`model_dump(exclude_unset=True)` is what makes PATCH safe.**
+  Without it every unsent optional field arrives as its default `None` and a
+  partial update wipes the fields it did not mention, with a 200.
+  `model_fields_set` is where Pydantic keeps the difference between absent and
+  explicitly null. — Phase 4, `routers/watchlists.py`.
+
+- 2026-09-01 — **`INSERT ... RETURNING` avoids the `lastrowid` window.** The
+  inserted row comes back from the same statement rather than from a follow-up
+  `SELECT` keyed on `cursor.lastrowid`. — Phase 4, `watchlist_repository.py`.
+
+- 2026-09-01 — **A `Depends` attached to an `APIRouter` runs for every route on
+  it and discards its return value.** That is the shape for a dependency that
+  exists only to raise — a route added later cannot forget it. — Phase 4,
+  `security.py`.
+
+- 2026-09-01 — **`response_class=Response` is needed for a real 204.** FastAPI's
+  default `JSONResponse` writes `null` into the body of a 204, which some
+  clients reject. — Phase 4, `routers/watchlists.py`.
+
+- 2026-09-01 — **A guard against ambient state has to be extended, not merely
+  written.** `_never_the_real_database` covered `JOBSAPI_DB_PATH` and knew
+  nothing about `JOBSAPI_APP_DB_PATH`, so the suite silently created a database
+  in the developer's home directory and passed. A read path fails when its
+  resource is missing; a write path creates it. See DEBUGGING.md. — Phase 4.
+
 ---
 
 ## AI-WRITTEN register
@@ -143,13 +173,13 @@ list only once it has been written up in `learning-log.md`.
 
 | Date | File | Concept to re-derive | Written up? |
 | ---- | ---- | -------------------- | ----------- |
-| 2026-09-01 | `pyproject.toml` | Why a `src/` layout needs a build backend at all, and what `uv sync` installs the project *as* — a `.pth` pointing at `src/` **plus** dist-info metadata (the original note had this backwards; `--no-editable` is what copies the package) | | ☑ |
-| 2026-09-01 | `.gitignore` | Why `data/` and `*.db` are ignored in a repo whose whole job is reading a database | | ☑ |
+| 2026-09-01 | `pyproject.toml` | Why a `src/` layout needs a build backend at all, and what `uv sync` installs the project *as* — a `.pth` pointing at `src/` **plus** dist-info metadata (the original note had this backwards; `--no-editable` is what copies the package) | ☑ |
+| 2026-09-01 | `.gitignore` | Why `data/` and `*.db` are ignored in a repo whose whole job is reading a database | ☑ |
 | 2026-09-01 | `docs/design.md` | Both Phase 0 decisions and the measurements behind them: `mode=ro` + path-not-policy config, and why WAL is *declined* rather than deferred | ☑ |
 | 2026-09-01 | `src/jobsapi/main.py` | Why an app *factory* rather than a module-level singleton, and what `include_router` does that the `@router.get` decorator did not | ☑ |
 | 2026-09-01 | `src/jobsapi/routers/meta.py` | Why `/health` is `async def` while every sqlite3 endpoint must be plain `def` — the rule is about what the body does, not house style | ☑ |
 | 2026-09-01 | `tests/test_health.py` | Why `TestClient` is used as a context manager (lifespan events), and why the OpenAPI schema is asserted on rather than trusted | ☑ |
-| 2026-09-01 | `.github/workflows/ci.yml` | What `uv sync --locked` refuses to do, and why CI having no network and no `jobs.db` is the point rather than a limitation | | ☑ |
+| 2026-09-01 | `.github/workflows/ci.yml` | What `uv sync --locked` refuses to do, and why CI having no network and no `jobs.db` is the point rather than a limitation | ☑ |
 | 2026-09-01 | `src/jobsapi/config.py` | Why the DB location is a *path, not a policy*, and why `get_settings` is cached but tests never call it | ☑ |
 | 2026-09-01 | `src/jobsapi/db.py` | Why `mode=ro` must be a URI (a plain connect *creates* a missing file), why `check_same_thread=False` is safe per-request but not globally, and why a generator dependency guarantees close | ☑ |
 | 2026-09-01 | `src/jobsapi/errors.py` | Why the repository raises `JobNotFound` and not `HTTPException`, and why BUSY and READONLY_ROLLBACK are two classes rather than one | ☑ |
@@ -162,13 +192,18 @@ list only once it has been written up in `learning-log.md`.
 | 2026-09-01 | `src/jobsapi/repository.py` (Phase 3) | The clauses+params list pattern that makes an eleventh filter one `if` rather than a combinatorial explosion | ☑ |
 | 2026-09-01 | `docs/api.md` | The three arguable decisions: NULLs never satisfy a filter, unknown params are rejected, `sort` is an allowlist | ☑ |
 | 2026-09-01 | `src/jobsapi/logging_config.py` | Why a ContextVar carries the request id where a parameter cannot, and why logs go to stdout rather than a file | ☑ |
-| 2026-09-01 | `src/jobsapi/repository.py` (Phase 5) | Why `substr()` belongs in the query and not in the response model, and why `/sources` needs a LEFT JOIN | | ☑ |
-| 2026-09-01 | `src/jobsapi/routers/runs.py` | Why `RunSummary` deliberately has no `duration_seconds` — `finished_at == started_at` in 62 of 63 finished runs, not all of them, which makes a computed duration *plausible* rather than obviously broken | | ☑ |
-| 2026-09-01 | `Dockerfile` | Why the build toolchain lives in a stage that never ships, why the database is a volume and not a layer, and why exec-form CMD matters for SIGTERM | | ☑ |
-| 2026-09-01 | `.dockerignore` | Why a build context that *could* contain a database is a problem even when no COPY references it | | ☑ |
-| 2026-09-01 | `scripts/make_demo_db.py` | Why a reader-only service ships a schema-creating script at all, and why it is stdlib-only | | ☑ |
-| 2026-09-01 | `.github/workflows/ci.yml` (docker job) | Why the Dockerfile is verified by querying a running container rather than by a successful build | | ☑ |
-| 2026-09-01 | `README.md` | Why every documented command was executed before being written down | | ☑ |
+| 2026-09-01 | `src/jobsapi/repository.py` (Phase 5) | Why `substr()` belongs in the query and not in the response model, and why `/sources` needs a LEFT JOIN | ☑ |
+| 2026-09-01 | `src/jobsapi/routers/runs.py` | Why `RunSummary` deliberately has no `duration_seconds` — `finished_at == started_at` in 62 of 63 finished runs, not all of them, which makes a computed duration *plausible* rather than obviously broken | ☑ |
+| 2026-09-01 | `Dockerfile` | Why the build toolchain lives in a stage that never ships, why the database is a volume and not a layer, and why exec-form CMD matters for SIGTERM | ☑ |
+| 2026-09-01 | `.dockerignore` | Why a build context that *could* contain a database is a problem even when no COPY references it | ☑ |
+| 2026-09-01 | `scripts/make_demo_db.py` | Why a reader-only service ships a schema-creating script at all, and why it is stdlib-only | ☑ |
+| 2026-09-01 | `.github/workflows/ci.yml` (docker job) | Why the Dockerfile is verified by querying a running container rather than by a successful build | ☑ |
+| 2026-09-01 | `README.md` | Why every documented command was executed before being written down | ☑ |
+| 2026-09-01 | `src/jobsapi/appdb.py` | Why the write database is a *second file* with inverted settings — read-write, WAL, foreign_keys ON, schema created here — and why WAL is right here and wrong for jobs.db | ☑ |
+| 2026-09-01 | `src/jobsapi/watchlist_repository.py` | Why uniqueness is enforced by the constraint and translated, never by a prior SELECT, and why the translation must be narrow | ☑ |
+| 2026-09-01 | `src/jobsapi/routers/watchlists.py` | 201+Location, 204 with an empty body, 409 vs 422, and why PUT and PATCH need different request models | ☑ |
+| 2026-09-01 | `src/jobsapi/security.py` | Why one optional key in one dependency is the ceiling, and why a wrong key is 401 rather than 403 | ☑ |
+| 2026-09-01 | `tests/test_watchlists.py` | Why the cascade is asserted against the database and the read-only guarantee against the file's bytes | ☑ |
 
 ---
 
@@ -403,3 +438,81 @@ this service is a *reader* of that schema, not a participant in it. The copy is
 not left to rot on trust — `db.verify_schema` compares the real database's
 columns at startup, so the two drifting apart is a loud refusal to start rather
 than a silent wrong answer.
+
+---
+
+### Phase 4 — 2026-09-01
+
+**Q1. `POST /watchlists` with a name that already exists is 409, but `limit=0`
+is 422. Both are "the server would not do what I asked" — what separates them?**
+
+Whether the request is wrong *on its own terms*. `limit=0` breaks a rule stated
+in the schema and would be wrong at any moment, against any state, on any
+deployment — the client must change the request. A duplicate name is a body
+where every field is legal and which *would have succeeded a minute earlier*;
+what refuses it is the current state of the collection. Telling that client to
+fix its request would be a lie, because the request is fine — the available
+names changed. 409 says "your request conflicts with reality", which is the
+actionable distinction: pick another name, or accept the thing already exists.
+
+**Q2. Why catch `IntegrityError` rather than SELECT first, when selecting first
+gives a clearer message?**
+
+Because selecting first does not work. The `SELECT` and the `INSERT` are two
+statements with a gap and no lock held across it, so two concurrent requests can
+both find nothing and both insert — rare, intermittent, and unreproducible on
+demand. The `UNIQUE` constraint is the only participant that can serialise the
+decision, so the code lets it decide and translates the result; the clear
+message is reconstructed in the handler, which costs nothing.
+
+The subtlety is that the translation must be **narrow**. Matching any
+`IntegrityError` would report a genuine bug in this module's own SQL — a broken
+NOT NULL, a mis-specified foreign key — to the client as a 409 it can do nothing
+about. Each handler checks *which* constraint failed and re-raises anything it
+does not recognise, so a real bug still surfaces as a 500.
+
+**Q3. `PUT` and `PATCH` accept almost the same JSON. Why two models rather than
+one with every field optional?**
+
+Because the same absent field means opposite things. In a `PUT` body — a
+complete new state — an omitted `description` means the resource has none, so it
+is cleared. In a `PATCH` body — only what changes — the same omission means
+"leave it alone". One model cannot carry both readings, and collapsing them is
+exactly how a rename silently wipes a description.
+
+What makes `PATCH` safe is `model_dump(exclude_unset=True)`, built on
+`model_fields_set`, which records the keys the client actually sent. That is
+also what lets `{"description": null}` mean "clear it" while omitting the key
+means "keep it" — a distinction `description: str | None = None` cannot express
+on its own, because both arrive as `None`.
+
+**Q4. `watchlist_items.job_id` has no foreign key. Missing constraint, or
+deliberate?**
+
+Deliberate and unavoidable: the row it refers to lives in a different database
+file, and SQLite constraints do not span databases. Referential integrity here
+cannot be an invariant the engine maintains — only a check performed at write
+time against the read-only connection, true at one moment rather than forever.
+
+The design question is what to do when it stops being true. Hiding such items
+would make a client's own saved data vanish unexplained; failing the request
+would let one dead reference break the whole page. So the item comes back with
+`job: null` and `job_missing: true`, and `DELETE` on it deliberately does not
+consult `jobs.db` — the case where cleanup matters most is the case where the
+source row is gone.
+
+**Q5. The suite passed 153/153 while writing a database into the developer's
+home directory. What does that say about the suite?**
+
+That "all tests pass" and "the tests did nothing they should not" are separate
+claims, and only the first is automated. The Phase 2 guard pointed
+`JOBSAPI_DB_PATH` somewhere impossible and existed to catch precisely this — but
+it named one variable, and Phase 4 added another.
+
+The asymmetry is the lesson. A *read* path that reaches ambient state fails when
+the resource is absent, which is how the Phase 1 version was caught loudly by
+CI. A *write* path creates what is absent, so the identical mistake produces a
+green run and a file on someone's disk. For anything that writes, the check is
+not the exit code — it is looking at the filesystem afterwards and asking what
+is there now that was not there before.
+

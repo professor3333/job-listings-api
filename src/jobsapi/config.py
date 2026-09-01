@@ -36,6 +36,21 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
 
+    # The database this service OWNS and writes to (Phase 4). A separate file
+    # from `db_path`, which is never written: the write path cannot reach the
+    # read path because they are different files. Defaults under the user's data
+    # directory rather than the working directory, so the location does not
+    # depend on where the process was started. The container overrides it to a
+    # writable volume — `/data` there is mounted read-only.
+    app_db_path: Path = Path.home() / ".local" / "share" / "jobsapi" / "app.db"
+
+    # Optional shared secret for the write endpoints. Unset (the default) leaves
+    # them open, which is right for a service that runs on localhost and holds
+    # nothing sensitive. Set it and every mutating request must carry
+    # `X-API-Key`. This is the ceiling for this build: no users, no login, no
+    # JWT — one key, checked in one dependency.
+    api_key: str | None = None
+
     # Page cache for one connection, in KiB when negative (SQLite's convention:
     # a negative value means KiB, a positive one means pages). 8 MiB is generous
     # for a 58 MB database and costs nothing when unused.

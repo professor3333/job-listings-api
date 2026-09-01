@@ -54,8 +54,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 FROM python:3.13-slim
 
 # A non-root user, created with a fixed uid so the ownership of a bind-mounted
-# file is predictable from the host side. The container never needs to write
-# anything: the database is mounted read-only and the logs go to stdout.
+# file is predictable from the host side. It writes in exactly one place — the
+# application database below — and nowhere else: `jobs.db` is mounted read-only
+# and the logs go to stdout.
 RUN groupadd --system --gid 1001 app \
  && useradd --system --uid 1001 --gid app --no-create-home app
 
@@ -66,12 +67,24 @@ RUN groupadd --system --gid 1001 app \
 ENV PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:$PATH"
 
-# The database lives on a mounted volume, never in a layer. Baking a 58 MB
+# The read database lives on a mounted volume, never in a layer. Baking a 64 MB
 # snapshot into the image would make it stale the moment the scraper next runs,
 # and would put someone else's data in an artefact that gets pushed to a
 # registry. `docs/design.md` Decision 1 is "a path, not a policy" — this is that
 # decision expressed as a default, overridable with `-e JOBSAPI_DB_PATH=...`.
 ENV JOBSAPI_DB_PATH=/data/jobs.db
+
+# The write database (Phase 4) needs somewhere writable, and /data is mounted
+# read-only, so it cannot live beside the database it references. The directory
+# is created and handed to the app user at build time because the running
+# container cannot create it: /app and / are root-owned and the process is not.
+#
+# Nothing is mounted here by default, which means watchlists live in the
+# container's writable layer and die with it. That is the right default for a
+# service whose primary job is reading, and the README documents the volume to
+# mount when they should outlive the container.
+ENV JOBSAPI_APP_DB_PATH=/var/lib/jobsapi/app.db
+RUN mkdir -p /var/lib/jobsapi && chown app:app /var/lib/jobsapi
 
 WORKDIR /app
 
