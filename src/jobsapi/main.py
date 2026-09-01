@@ -78,7 +78,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     """
     app = FastAPI(
         title="Job Listings API",
-        version="0.5.0",
+        version="0.6.0",
         summary="Read-only REST API over the job-listing-scraper dataset.",
         description=(
             "Errors use RFC 9457 problem details "

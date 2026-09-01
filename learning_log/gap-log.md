@@ -124,6 +124,16 @@ Format: `- YYYY-MM-DD — the concept — where it came up`
   justified by a row count does not. Any figure quoted in prose needs the date it
   was measured. — Phase 5/6, `docs/`.
 
+- 2026-09-01 — **Configuration that nothing reads is a promise the service does
+  not keep.** `Settings` carried `default_page_size` and `max_page_size` from
+  Phase 1; `schemas.py` used module constants instead, so setting
+  `JOBSAPI_MAX_PAGE_SIZE=500` did nothing at all. Found while *documenting* the
+  config for the README, not by any test — nothing fails when a setting is
+  merely ignored. Removed rather than wired up, because a page-size bound is
+  part of the published contract: it is a `Field` constraint that `/openapi.json`
+  states, and an env var that changed the real bound would make the generated
+  docs lie. — Phase 6, `config.py`.
+
 ---
 
 ## AI-WRITTEN register

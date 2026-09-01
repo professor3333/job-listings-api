@@ -1,0 +1,30 @@
+# The build context is uploaded to the daemon before anything runs, so keeping
+# it small is the cheapest build speedup available. Everything here is either
+# irrelevant to the image or actively must not enter it.
+
+.git
+.github
+.venv
+__pycache__/
+*.py[oc]
+.pytest_cache/
+.ruff_cache/
+.DS_Store
+
+# Never let a database into the build context. It would be uploaded to the
+# daemon even if no COPY referenced it, and a stray `COPY . .` would bake it
+# into a layer — the exact thing the volume mount exists to avoid.
+data/
+*.db
+*.db-wal
+*.db-shm
+.env
+
+# Not needed to build or run the service.
+tests/
+docs/
+learning_log/
+DEBUGGING.md
+CLAUDE.md
+Dockerfile
+.dockerignore

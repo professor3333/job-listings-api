@@ -187,8 +187,10 @@ with no recorded salary is not evidence of a salary above the threshold. This
 also falls out of SQL for free (`NULL >= 100000` is NULL, which is not true), so
 the documented behaviour and the natural implementation agree.
 
-This is not a corner case: `salary_min` is NULL in **69%** of rows. The same
-rule applies to `posted_after`/`posted_before` against a NULL `posted_at`.
+This is not a corner case: `salary_min` is NULL in **~70%** of rows (69% at
+Phase 0, 70.4% re-measured at Phase 6 — the proportion is what is stable, not
+the row count). The same rule applies to `posted_after`/`posted_before` against
+a NULL `posted_at`.
 
 To find rows with no recorded value, use the tri-state filter where one exists —
 `remote=unknown`. There is currently **no** way to ask for "salary not recorded"
