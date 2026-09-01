@@ -116,6 +116,14 @@ Format: `- YYYY-MM-DD — the concept — where it came up`
   shared `Pagination` base made the rule true everywhere at once. Caught by a
   test, not by reading. — Phase 5, `schemas.py`.
 
+- 2026-09-01 — **The dataset figures in the docs are snapshots, and the scraper
+  keeps running.** `docs/design.md` and `docs/api.md` cite 3,105 jobs; the source
+  database holds 3,498 today. The *proportions* the decisions rest on are stable
+  (`salary_min` NULL: 69% then, 70.4% now — 1,036 of 3,498 populated), which is
+  the point: a decision justified by a proportion survives the data growing, one
+  justified by a row count does not. Any figure quoted in prose needs the date it
+  was measured. — Phase 5/6, `docs/`.
+
 ---
 
 ## AI-WRITTEN register
@@ -127,23 +135,23 @@ list only once it has been written up in `learning-log.md`.
 | ---- | ---- | -------------------- | ----------- |
 | 2026-09-01 | `pyproject.toml` | Why a `src/` layout needs a build backend at all, and what `uv sync` installs the project *as* (editable wheel, not a path on `sys.path`) | ☐ |
 | 2026-09-01 | `.gitignore` | Why `data/` and `*.db` are ignored in a repo whose whole job is reading a database | ☐ |
-| 2026-09-01 | `docs/design.md` | Both Phase 0 decisions and the measurements behind them: `mode=ro` + path-not-policy config, and why WAL is *declined* rather than deferred | ☐ |
-| 2026-09-01 | `src/jobsapi/main.py` | Why an app *factory* rather than a module-level singleton, and what `include_router` does that the `@router.get` decorator did not | ☐ |
-| 2026-09-01 | `src/jobsapi/routers/meta.py` | Why `/health` is `async def` while every sqlite3 endpoint must be plain `def` — the rule is about what the body does, not house style | ☐ |
-| 2026-09-01 | `tests/test_health.py` | Why `TestClient` is used as a context manager (lifespan events), and why the OpenAPI schema is asserted on rather than trusted | ☐ |
+| 2026-09-01 | `docs/design.md` | Both Phase 0 decisions and the measurements behind them: `mode=ro` + path-not-policy config, and why WAL is *declined* rather than deferred | ☑ |
+| 2026-09-01 | `src/jobsapi/main.py` | Why an app *factory* rather than a module-level singleton, and what `include_router` does that the `@router.get` decorator did not | ☑ |
+| 2026-09-01 | `src/jobsapi/routers/meta.py` | Why `/health` is `async def` while every sqlite3 endpoint must be plain `def` — the rule is about what the body does, not house style | ☑ |
+| 2026-09-01 | `tests/test_health.py` | Why `TestClient` is used as a context manager (lifespan events), and why the OpenAPI schema is asserted on rather than trusted | ☑ |
 | 2026-09-01 | `.github/workflows/ci.yml` | What `uv sync --locked` refuses to do, and why CI having no network and no `jobs.db` is the point rather than a limitation | ☐ |
-| 2026-09-01 | `src/jobsapi/config.py` | Why the DB location is a *path, not a policy*, and why `get_settings` is cached but tests never call it | ☐ |
-| 2026-09-01 | `src/jobsapi/db.py` | Why `mode=ro` must be a URI (a plain connect *creates* a missing file), why `check_same_thread=False` is safe per-request but not globally, and why a generator dependency guarantees close | ☐ |
-| 2026-09-01 | `src/jobsapi/errors.py` | Why the repository raises `JobNotFound` and not `HTTPException`, and why BUSY and READONLY_ROLLBACK are two classes rather than one | ☐ |
-| 2026-09-01 | `src/jobsapi/schemas.py` | Three shapes on purpose: input model, list output, detail output — none of them the database row | ☐ |
-| 2026-09-01 | `src/jobsapi/repository.py` | Why `ORDER BY posted_at DESC` alone silently repeats rows across pages, and why identifiers cannot be parameterised | ☐ |
-| 2026-09-01 | `src/jobsapi/routers/jobs.py` | Why this file is plain `def` while `/health` is `async def` | ☐ |
-| 2026-09-01 | `tests/conftest.py` | Why the fixture DB is *written* read-write and *read* read-only, and why the schema is copied rather than imported from Build 2 | ☐ |
-| 2026-09-01 | `src/jobsapi/problems.py` | Why FastAPI's default `detail` (list for 422, string for 404) forces a custom envelope, and why every handler funnels through one builder | ☐ |
-| 2026-09-01 | `src/jobsapi/schemas.py` (Phase 3) | The functional StrEnum for colon-bearing sources, `extra="forbid"`, and why cross-field rules need a model validator rather than field constraints | ☐ |
-| 2026-09-01 | `src/jobsapi/repository.py` (Phase 3) | The clauses+params list pattern that makes an eleventh filter one `if` rather than a combinatorial explosion | ☐ |
-| 2026-09-01 | `docs/api.md` | The three arguable decisions: NULLs never satisfy a filter, unknown params are rejected, `sort` is an allowlist | ☐ |
-| 2026-09-01 | `src/jobsapi/logging_config.py` | Why a ContextVar carries the request id where a parameter cannot, and why logs go to stdout rather than a file | ☐ |
+| 2026-09-01 | `src/jobsapi/config.py` | Why the DB location is a *path, not a policy*, and why `get_settings` is cached but tests never call it | ☑ |
+| 2026-09-01 | `src/jobsapi/db.py` | Why `mode=ro` must be a URI (a plain connect *creates* a missing file), why `check_same_thread=False` is safe per-request but not globally, and why a generator dependency guarantees close | ☑ |
+| 2026-09-01 | `src/jobsapi/errors.py` | Why the repository raises `JobNotFound` and not `HTTPException`, and why BUSY and READONLY_ROLLBACK are two classes rather than one | ☑ |
+| 2026-09-01 | `src/jobsapi/schemas.py` | Three shapes on purpose: input model, list output, detail output — none of them the database row | ☑ |
+| 2026-09-01 | `src/jobsapi/repository.py` | Why `ORDER BY posted_at DESC` alone silently repeats rows across pages, and why identifiers cannot be parameterised | ☑ |
+| 2026-09-01 | `src/jobsapi/routers/jobs.py` | Why this file is plain `def` while `/health` is `async def` | ☑ |
+| 2026-09-01 | `tests/conftest.py` | Why the fixture DB is *written* read-write and *read* read-only, and why the schema is copied rather than imported from Build 2 | ☑ |
+| 2026-09-01 | `src/jobsapi/problems.py` | Why FastAPI's default `detail` (list for 422, string for 404) forces a custom envelope, and why every handler funnels through one builder | ☑ |
+| 2026-09-01 | `src/jobsapi/schemas.py` (Phase 3) | The functional StrEnum for colon-bearing sources, `extra="forbid"`, and why cross-field rules need a model validator rather than field constraints | ☑ |
+| 2026-09-01 | `src/jobsapi/repository.py` (Phase 3) | The clauses+params list pattern that makes an eleventh filter one `if` rather than a combinatorial explosion | ☑ |
+| 2026-09-01 | `docs/api.md` | The three arguable decisions: NULLs never satisfy a filter, unknown params are rejected, `sort` is an allowlist | ☑ |
+| 2026-09-01 | `src/jobsapi/logging_config.py` | Why a ContextVar carries the request id where a parameter cannot, and why logs go to stdout rather than a file | ☑ |
 | 2026-09-01 | `src/jobsapi/repository.py` (Phase 5) | Why `substr()` belongs in the query and not in the response model, and why `/sources` needs a LEFT JOIN | ☐ |
 | 2026-09-01 | `src/jobsapi/routers/runs.py` | Why `RunSummary` deliberately has no `duration_seconds` | ☐ |
 
@@ -162,6 +170,14 @@ to that router's own `.routes` list. The application knows nothing about it yet.
 `FastAPI` instance (applying any `prefix`, `tags` and dependencies as it goes).
 That two-step split is why a router can be imported and unit-tested on its own,
 and why the same router could be mounted twice under different prefixes.
+
+> **Correction, 2026-09-01 (written while closing the learning log).** The
+> "copies those routes onto the `FastAPI` instance" sentence is true of older
+> FastAPI, not of the installed 0.141.1. `include_router` appends a single
+> `fastapi.routing._IncludedRouter` holding a *reference* to the router plus the
+> prefix/tags/dependencies, and computes effective routes lazily. `app.routes`
+> here contains no `APIRoute` at all. The conclusions stand — see
+> `learning-log.md`, Part 1 entry 1 and Part 2 "Framework mechanics" Q1.
 
 **Q2. `/health` is `async def`, but the project rule says sqlite3 endpoints must
 be plain `def`. Is that a contradiction?**
