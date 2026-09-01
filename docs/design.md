@@ -164,6 +164,22 @@ hardening table's existing "loud, readable failure at startup" row.
 Enforced at the connection (`mode=ro`), not by intention. Any Phase 4 write path
 goes to a separate database this service owns.
 
+> **Phase 4 happened, and the rule held.** Watchlists are written to
+> `JOBSAPI_APP_DB_PATH`, a different file created and owned by this service, with
+> the settings inverted throughout: read-write rather than `mode=ro`, WAL rather
+> than `delete`, `foreign_keys` ON, and a schema this service creates rather than
+> merely verifies. `jobs.db` gained a second enforcement (`PRAGMA query_only`)
+> rather than losing one, and a test reads the file's bytes before and after a
+> full create/update/delete cycle to prove they are unchanged. The full write
+> contract is in `api.md`.
+>
+> Note that WAL — **declined** above for `jobs.db` — is used for the application
+> database. The objection there was that a WAL *reader* must create a `-shm`
+> file, which the read-only bind mount forbids; that database is on a writable
+> volume and this process is its writer, so the objection does not apply. The
+> same setting is right in one place and wrong in the other, which is why "use
+> WAL" is not advice.
+
 ---
 
 ## Decision 2 — what does an error look like?

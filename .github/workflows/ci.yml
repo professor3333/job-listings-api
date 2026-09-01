@@ -121,6 +121,26 @@ jobs:
           fi
           echo "write refused, as required"
 
+          # Phase 4: the service now writes, but only to the database it owns,
+          # which lives outside the read-only mount. Exercising it here proves
+          # the image's writable directory is actually writable by uid 1001 —
+          # a permissions mistake no unit test can catch.
+          echo "== the write path works inside the container =="
+          created=$(curl -fsS -X POST http://127.0.0.1:8000/watchlists \
+            -H 'content-type: application/json' -d '{"name":"ci"}' \
+            -o /tmp/created.json -w '%{http_code}')
+          test "$created" = "201"
+          id=$(python3 -c 'import json;print(json.load(open("/tmp/created.json"))["id"])')
+          curl -fsS -X POST "http://127.0.0.1:8000/watchlists/$id/jobs" \
+            -H 'content-type: application/json' -d '{"job_id":1}' >/dev/null
+          test "$(curl -fsS http://127.0.0.1:8000/watchlists/$id \
+                  | python3 -c 'import json,sys;print(json.load(sys.stdin)["item_count"])')" = "1"
+
+          echo "== and jobs.db is still untouched afterwards =="
+          docker exec api python -c "import sqlite3; sqlite3.connect('/data/jobs.db').execute('DELETE FROM jobs')" \
+            && { echo "a write SUCCEEDED against the read-only mount"; exit 1; }
+          echo "still read-only after the write path ran"
+
       # The logs are the artefact worth seeing when any of the above fails.
       - name: Container logs
         if: always()

@@ -2,9 +2,12 @@
 
 [![CI](https://github.com/professor3333/job-listings-api/actions/workflows/ci.yml/badge.svg)](https://github.com/professor3333/job-listings-api/actions/workflows/ci.yml)
 
-A read-only **FastAPI** service over a scraped job-listings SQLite dataset, with
-input validation that is part of the type system rather than a layer of checks
-bolted on top.
+A **FastAPI** service over a scraped job-listings SQLite dataset, with input
+validation that is part of the type system rather than a layer of checks bolted
+on top.
+
+It **reads** Build 2's dataset and **never writes to it**. Watchlists — the one
+thing you can create here — live in a separate database this service owns.
 
 The dataset comes from [`job-listing-scraper`](https://github.com/professor3333/job-listing-scraper)
 — 3,498 jobs across 8 sources at the time of writing, with scrape-run history
@@ -31,7 +34,11 @@ what happens when someone sends garbage. The layout enforces it.
    │ db.py       one conn per request │  read-only URI, closed on the way out
    └────────────────┬─────────────────┘
                     │
-              jobs.db (mode=ro)
+        ┌───────────┴───────────┐
+        │                       │
+  jobs.db (mode=ro)      app.db (read-write)
+  Build 2 owns it        this service owns it
+  never written          watchlists live here
 ```
 
 Four rules hold it together:
@@ -89,6 +96,24 @@ The opposite call is made one field over: `remote` is tri-state, and
 `remote=unknown` means `IS NULL`, because NULL there records that the scraper
 never established the fact — collapsing it to `false` would invent data.
 
+**Writes go to a second database, and `409` is not `422`.** A duplicate
+watchlist name is a `409 Conflict`: the body was valid and the identical request
+would have succeeded a minute earlier, so what refused it is the *state*, not the
+input. The duplicate is detected by the `UNIQUE` constraint rather than a prior
+`SELECT`, because check-then-insert is a race two concurrent requests both win.
+
+**`PUT` replaces, `PATCH` merges.** An omitted `description` is *cleared* by
+`PUT` and *left alone* by `PATCH`. The mechanism is `model_dump(exclude_unset=True)`:
+without it, every unsent field arrives as its default `None` and a rename
+silently wipes the description — the most common way a `PATCH` endpoint is
+written wrong.
+
+**A watchlist's job reference can dangle.** `watchlist_items.job_id` has no
+foreign key and cannot have one, because the row lives in a different database
+file. It is checked when written, so a job later removed from `jobs.db` leaves an
+entry pointing at nothing — reported as `job_missing: true` rather than hidden,
+since a client that saved it needs to see it to clean it up.
+
 The full reasoning, including the options rejected and the measurements behind
 them, is in [`docs/design.md`](docs/design.md) and [`docs/api.md`](docs/api.md).
 
@@ -110,6 +135,10 @@ them, is in [`docs/design.md`](docs/design.md) and [`docs/api.md`](docs/api.md).
 - Loud startup failure if the database is missing or its schema has drifted
 - Distinct handling for a *busy* database (503, retryable) and a *wedged* one
   (503, explicitly not retryable)
+- Watchlists: create, list, replace, patch, delete, and add or remove jobs —
+  written to a **separate database**, with `201`+`Location`, `409` on duplicates
+  and `204` on delete
+- An optional single API key on the watchlist endpoints, off unless configured
 - OpenAPI docs generated from the types, at `/docs`
 
 ## Tech stack
@@ -127,15 +156,19 @@ allowed to hide it.
 src/jobsapi/
 ├── main.py            app factory, middleware, lifespan — no business logic
 ├── config.py          settings from JOBSAPI_* env vars
-├── db.py              connection per request, mode=ro, schema check, error classify
+├── db.py              read connection per request, mode=ro, schema check
+├── appdb.py           the database this service owns: read-write, WAL, FK on
+├── security.py        the optional X-API-Key dependency
 ├── schemas.py         Pydantic request + response models = the contract
-├── repository.py      all the SQL
+├── repository.py      all the SQL for the read database
+├── watchlist_repository.py   all the SQL for the write database
 ├── errors.py          domain exceptions (JobNotFound, DatabaseWedged, ...)
 ├── problems.py        RFC 9457 envelope and every exception handler
 ├── logging_config.py  JSON formatter, request-id ContextVar
 └── routers/
     ├── jobs.py        /jobs, /jobs/{id}, /jobs/{id}/changes
     ├── runs.py        /runs
+    ├── watchlists.py  the write path
     └── meta.py        /health, /sources, /stats
 tests/                 TestClient only — no network, no real database
 scripts/
@@ -168,6 +201,8 @@ All settings are environment variables with a `JOBSAPI_` prefix.
 | `JOBSAPI_BUSY_TIMEOUT_MS` | `5000` | How long SQLite waits on a lock before raising `SQLITE_BUSY`, which becomes a `503`. Never a hang. |
 | `JOBSAPI_CACHE_SIZE_KIB` | `-8000` | Page cache per connection. Negative means KiB, SQLite's convention. |
 | `JOBSAPI_LOG_LEVEL` | `INFO` | Root log level. |
+| `JOBSAPI_APP_DB_PATH` | `~/.local/share/jobsapi/app.db` | The database this service **owns and writes to**. Created if absent. Never the same file as `JOBSAPI_DB_PATH`. |
+| `JOBSAPI_API_KEY` | *(unset)* | When set, every `/watchlists` request must carry an `X-API-Key` header. Unset leaves them open. |
 
 The database path is **a path, not a policy**: pointing it at a snapshot rather
 than the live scraper database is a deployment choice, and no code branches on it.
@@ -224,6 +259,41 @@ curl 'http://127.0.0.1:8000/runs?limit=3'
 curl http://127.0.0.1:8000/stats
 ```
 
+Creating something — the write path:
+
+```bash
+# 201, with a Location header naming the new resource
+curl -i -X POST http://127.0.0.1:8000/watchlists \
+  -H 'content-type: application/json' \
+  -d '{"name": "Backend roles", "description": "EU only"}'
+# HTTP/1.1 201 Created
+# location: /watchlists/1
+
+# 409 — the body is fine, the state refuses it
+curl -X POST http://127.0.0.1:8000/watchlists \
+  -H 'content-type: application/json' -d '{"name": "Backend roles"}'
+
+# add a job; 404 if the job does not exist, 409 if it is already on the list
+curl -X POST http://127.0.0.1:8000/watchlists/1/jobs \
+  -H 'content-type: application/json' \
+  -d '{"job_id": 3, "note": "apply monday"}'
+
+curl http://127.0.0.1:8000/watchlists/1/jobs   # job details joined in
+
+# PATCH merges: description survives
+curl -X PATCH http://127.0.0.1:8000/watchlists/1 \
+  -H 'content-type: application/json' -d '{"name": "Backend roles EU"}'
+
+# PUT replaces: the omitted description is CLEARED
+curl -X PUT http://127.0.0.1:8000/watchlists/1 \
+  -H 'content-type: application/json' -d '{"name": "Backend roles EU"}'
+
+curl -i -X DELETE http://127.0.0.1:8000/watchlists/1   # 204, empty body
+```
+
+That `PATCH`/`PUT` pair is the whole distinction: the same body, and one keeps
+`description` while the other clears it.
+
 Bad input, and what it looks like:
 
 ```bash
@@ -275,6 +345,20 @@ never has to guess which of twelve filters was wrong.
 | GET | `/runs` | `200` | `RunPage` — scrape run history |
 | GET | `/stats` | `200` | `Stats` — counts, null coverage, tri-state split |
 
+### Watchlists (the write path)
+
+| Method | Path | Success | Notes |
+| ------ | ---- | ------- | ----- |
+| POST | `/watchlists` | `201` | `Location` header; `409` on a duplicate name |
+| GET | `/watchlists` | `200` | `WatchlistPage` |
+| GET | `/watchlists/{id}` | `200` | `404` when absent |
+| PUT | `/watchlists/{id}` | `200` | Full replacement; omitted fields are cleared; never creates |
+| PATCH | `/watchlists/{id}` | `200` | Partial; `422` on an empty body |
+| DELETE | `/watchlists/{id}` | `204` | `404` if already gone; cascades to items |
+| POST | `/watchlists/{id}/jobs` | `201` | `404` unknown job, `409` already on the list |
+| GET | `/watchlists/{id}/jobs` | `200` | Job details joined from the read database |
+| DELETE | `/watchlists/{id}/jobs/{job_id}` | `204` | `404` if not on the list |
+
 Every response carries `X-Request-ID` and `X-Response-Time-ms`.
 
 ### `GET /jobs` query parameters
@@ -309,11 +393,15 @@ than an error message.
 | `405` | A write method against a read-only path | The path exists; the method does not apply. |
 | `422` | Any input the service will not act on | Malformed *and* cross-field. See the design note above. |
 | `500` | An unhandled fault | Body says nothing; the traceback goes to the log under the same `request_id`. |
+| `201` | A resource was created | Carries `Location`. |
+| `204` | A delete succeeded | No body, deliberately. |
+| `401` | A configured API key was missing or wrong | Not `403` — that means *authenticated but forbidden*, and there is no identity here to forbid. |
+| `409` | A uniqueness constraint refused the write | Not `422` — the body was valid; the current state refused it. |
 | `503` | The database is locked or wedged | The service is fine; its dependency is not. `DATABASE_BUSY` carries `Retry-After`; `DATABASE_UNAVAILABLE` deliberately does not, because a wedged database cannot be fixed by retrying. |
 
 Every 4xx and 5xx uses the same envelope, with these `code` values:
-`VALIDATION_FAILED`, `CROSS_FIELD_CONFLICT`, `NOT_FOUND`, `DATABASE_BUSY`,
-`DATABASE_UNAVAILABLE`, `INTERNAL_ERROR`. Branch on `code`, never on `title` or
+`VALIDATION_FAILED`, `CROSS_FIELD_CONFLICT`, `NOT_FOUND`, `DUPLICATE_RESOURCE`,
+`UNAUTHORIZED`, `DATABASE_BUSY`, `DATABASE_UNAVAILABLE`, `INTERNAL_ERROR`. Branch on `code`, never on `title` or
 `detail`, which are prose and may be reworded.
 
 ## Where the data comes from
@@ -343,7 +431,7 @@ database is committed to either repository, and `.gitignore` here excludes
 uv run pytest
 ```
 
-153 tests. The suite **needs no network and no `jobs.db`** — `tests/conftest.py`
+197 tests. The suite **needs no network and no `jobs.db`** — `tests/conftest.py`
 builds its own temporary SQLite database per test with Build 2's schema and a
 handful of hand-written rows, including the awkward ones. An autouse fixture
 points `JOBSAPI_DB_PATH` at a path that cannot exist, so a test that forgets to
@@ -360,7 +448,11 @@ Every row of the project's hardening table has a test: out-of-range `limit`,
 negative `offset`, `/jobs/abc`, a missing id, `%`/`_`/quotes/emoji in `q`, an
 oversized `q`, `sort=id;DROP TABLE jobs`, both cross-field conflicts, NULL
 serialisation, a missing database file, schema drift, a locked database, a wedged
-one, and unknown query parameters.
+one, and unknown query parameters. The write path adds its own: every status
+code above, `PUT` versus `PATCH` semantics, the cascade asserted against the
+database rather than inferred from the API, a dangling job reference, and a test
+that reads `jobs.db`'s bytes before and after a full create/update/delete cycle
+to prove the write path never touched it.
 
 ## Docker
 
@@ -389,9 +481,21 @@ uv run python scripts/make_demo_db.py /tmp/jobsdata/jobs.db
 docker run -p 8000:8000 -v /tmp/jobsdata:/data:ro job-listings-api
 ```
 
+Watchlists are written to `/var/lib/jobsapi/app.db` inside the container, which
+is **not** mounted by default — so they live in the container's writable layer
+and die with it. Mount a volume there to keep them:
+
+```bash
+docker run -p 8000:8000 \
+  -v ~/code/job-listing-scraper/data:/data:ro \
+  -v jobsapi-data:/var/lib/jobsapi \
+  job-listings-api
+```
+
 CI builds this image on every push and smoke-tests the running container: that it
-serves rows from the mounted volume, still returns 422 for bad input, runs as uid
-1001, and that a write against the mounted database is refused.
+serves rows from the read-only mounted volume, still returns 422 for bad input,
+runs as uid 1001, that the write path works end to end inside the image, and that
+a write against `/data/jobs.db` is still refused afterwards.
 
 ## Development
 

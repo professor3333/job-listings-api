@@ -19,6 +19,15 @@ Base URL in development: `http://127.0.0.1:8000`
 | GET    | `/sources`         | `200`  | `list[SourceSummary]` | Bare array — bounded cardinality. |
 | GET    | `/runs`            | `200`  | `RunPage`      | Paginated run history. |
 | GET    | `/stats`           | `200`  | `Stats`        | Counts, coverage, tri-state split. |
+| POST   | `/watchlists`      | `201`  | `Watchlist`    | `Location` header. `409` on a duplicate name. |
+| GET    | `/watchlists`      | `200`  | `WatchlistPage` | Paginated. |
+| GET    | `/watchlists/{id}` | `200`  | `Watchlist`    | `404` when the id matches no row. |
+| PUT    | `/watchlists/{id}` | `200`  | `Watchlist`    | Full replacement. `404`; never creates. |
+| PATCH  | `/watchlists/{id}` | `200`  | `Watchlist`    | Partial update. `422` on an empty body. |
+| DELETE | `/watchlists/{id}` | `204`  | *(none)*       | `404` if already gone. Cascades to items. |
+| POST   | `/watchlists/{id}/jobs` | `201` | `WatchlistEntry` | `404` for an unknown job, `409` if already on the list. |
+| GET    | `/watchlists/{id}/jobs` | `200` | `WatchlistEntryPage` | Job details joined in from the read database. |
+| DELETE | `/watchlists/{id}/jobs/{job_id}` | `204` | *(none)* | `404` if the job is not on the list. |
 
 Every response carries `X-Request-ID` and `X-Response-Time-ms`.
 
@@ -41,6 +50,10 @@ asking about sources expects to hear about data.
 | `405` | A write method against a read-only path | The path exists; the method does not apply to it. |
 | `422` | Any input the service will not act on | See below — this is the deliberate call. |
 | `500` | An unhandled fault | Body says nothing; the traceback goes to the log with a `request_id`. |
+| `201` | A resource was created | Carries a `Location` header naming it. |
+| `204` | A delete succeeded | Success with deliberately no representation to send. |
+| `401` | A write endpoint was called without a valid `X-API-Key`, when one is configured | Not `403`: that means *authenticated but forbidden*, and there is no identity here to forbid. |
+| `409` | A uniqueness constraint refused the write | Not `422`: the body was valid and would have succeeded a moment earlier. What refused it is the current *state*, not the input. |
 | `503` | The database is locked or wedged | The service is fine; its dependency is not. |
 
 ### The `400` vs `422` decision
@@ -355,3 +368,113 @@ board, this service rejects that source with `422` until the tuple is updated.
 That is deliberate — a static enum keeps `/openapi.json` accurate and avoids a
 database round-trip during validation — but it is a coupling to remember, and
 the reason `SOURCE_VALUES` carries a comment saying so.
+
+---
+
+## The write path (Phase 4)
+
+Everything above reads Build 2's dataset. Everything below writes to a
+**separate database this service owns**. The two never mix: `jobs.db` is opened
+`mode=ro` with `PRAGMA query_only`, and no code path in the write endpoints can
+reach it with a writable handle.
+
+| | read database | write database |
+| --- | --- | --- |
+| setting | `JOBSAPI_DB_PATH` | `JOBSAPI_APP_DB_PATH` |
+| owner | Build 2 | this service |
+| mode | `mode=ro` + `query_only` | read-write |
+| journal | `delete` (WAL declined — see `design.md`) | **WAL** |
+| schema | verified at startup, never created | created at startup if absent |
+| `user_version` | 0, so drift is detected by comparing columns | 1 |
+
+### Decision: `409`, not `422`, for a duplicate
+
+`POST /watchlists` with a name that already exists is a `409 Conflict`. The body
+parsed, every field was legal, and the *identical* request would have succeeded
+a minute earlier. What refuses it is the state of the collection, so telling the
+client to fix its request would be a lie — the fix is to pick another name.
+
+`422` stays for bodies that are wrong on their own terms: a missing `name`, a
+`name` of 81 characters, an unknown field, a `job_id` of `0`.
+
+### Decision: the duplicate check is the constraint, not a prior `SELECT`
+
+The insert is attempted and `sqlite3.IntegrityError` is translated into the
+`409`. Reading first and then inserting is a time-of-check-to-time-of-use race:
+two concurrent requests can both find nothing and both proceed. The `UNIQUE`
+constraint is the only participant that can actually serialise the decision, so
+it makes it.
+
+Name comparison is case-insensitive (`COLLATE NOCASE` on the column), so
+`Backend Roles` and `backend roles` are the same watchlist.
+
+### Decision: `PUT` replaces, `PATCH` merges
+
+This is the distinction the phase exists to teach, and it is visible in the
+request models rather than in the handler.
+
+- **`PUT`** takes the *complete new state*. An omitted `description` therefore
+  **clears** it — the client has described a resource that has none. `PUT` is
+  idempotent: sending the same body twice leaves the same state, which is what
+  makes it safe to retry after a timeout.
+- **`PATCH`** takes *only what changes*. An omitted `description` is left alone;
+  an explicit `{"description": null}` clears it. The mechanism is Pydantic's
+  `model_fields_set` via `model_dump(exclude_unset=True)` — without it every
+  unsent field would arrive as its default `None` and a rename would silently
+  wipe the description.
+- **`PATCH {}`** is a `422`, not a successful no-op. It asks for a change and
+  names none; answering `200` would tell the client an update was applied.
+
+### Decision: `PUT` to a missing id is `404`, not an upsert
+
+HTTP permits `PUT` to create at a client-chosen URL. It is wrong here because
+ids are **server-assigned**: a client cannot know a valid id for a resource that
+does not exist, so a `PUT` to one is a mistake rather than an instruction.
+
+### Decision: `DELETE` on something already gone is `404`
+
+`204` on the first call, `404` on the second. `DELETE` remains idempotent in the
+sense HTTP requires — repeating it does not change the *effect*, the resource
+stays absent — but the second response reports honestly what it found. A `204`
+would claim to have deleted something that was not there.
+
+Deleting a watchlist removes its items through `ON DELETE CASCADE`, which works
+only because `PRAGMA foreign_keys = ON` is set on every connection. SQLite
+leaves foreign keys **off** by default; without that line the clause parses,
+does nothing, and orphans rows silently.
+
+### Decision: a job reference can dangle, and is reported rather than hidden
+
+`watchlist_items.job_id` has no foreign key and **cannot have one** — the row it
+refers to lives in a different database file, and SQLite constraints do not span
+databases. Existence is checked at write time against the read-only connection,
+which makes it true at one moment rather than an invariant.
+
+So a job removed from `jobs.db` afterwards leaves an item pointing at nothing.
+`GET /watchlists/{id}/jobs` returns that item with `job: null` and
+`job_missing: true` rather than dropping it, because the client saved it
+deliberately and needs to see it to clean it up. `DELETE` on such an item still
+works, and deliberately does not consult `jobs.db` — the one case where cleanup
+matters most is the case where the source row is gone.
+
+The job details on that endpoint are joined **in Python**, not in SQL: two
+database files cannot be joined on one connection without `ATTACH`, and
+attaching `jobs.db` to the read-write connection would put a writable handle on
+the file this service promises never to write. One query for the page of items,
+then one batched `WHERE id IN (...)` — not one query per row.
+
+### The optional API key
+
+Unset by default, and then the write endpoints are open — correct for a service
+on localhost holding nothing sensitive. Set `JOBSAPI_API_KEY` and every
+`/watchlists` request must carry `X-API-Key`.
+
+Missing key and wrong key both return `401` with
+`WWW-Authenticate: ApiKey realm="jobsapi"`. `403` would mean *authenticated but
+forbidden*, which implies an identity to forbid; there is one shared secret and
+no users, so every failure is "not authenticated". (`ApiKey` is not an
+IANA-registered scheme; the header is sent because RFC 9110 requires one on a
+`401`, and naming the scheme is more useful than omitting it.)
+
+The key guards `/watchlists` only. Build 2's public dataset stays readable —
+what is gated is user-created content.

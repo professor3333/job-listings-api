@@ -18,7 +18,15 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from jobsapi.db import classify
-from jobsapi.errors import DatabaseUnavailable, DatabaseWedged, JobNotFound
+from jobsapi.errors import (
+    ApiKeyRequired,
+    DatabaseUnavailable,
+    DatabaseWedged,
+    DuplicateResource,
+    JobNotFound,
+    WatchlistItemNotFound,
+    WatchlistNotFound,
+)
 from jobsapi.schemas import Problem, ProblemDetail
 
 # The media type is part of the standard, not decoration: it tells a client the
@@ -35,6 +43,8 @@ CODE_NOT_FOUND = "NOT_FOUND"
 CODE_DATABASE_BUSY = "DATABASE_BUSY"
 CODE_DATABASE_UNAVAILABLE = "DATABASE_UNAVAILABLE"
 CODE_INTERNAL_ERROR = "INTERNAL_ERROR"
+CODE_DUPLICATE = "DUPLICATE_RESOURCE"
+CODE_UNAUTHORIZED = "UNAUTHORIZED"
 
 
 def request_id(request: Request) -> str:
@@ -142,6 +152,67 @@ def register_handlers(app: FastAPI) -> None:
             title="Job not found",
             detail=str(exc),
             code=CODE_NOT_FOUND,
+        )
+
+    @app.exception_handler(WatchlistNotFound)
+    async def _watchlist_missing(request: Request, exc: WatchlistNotFound):
+        """Same envelope and code as a missing job — absence is absence."""
+        return problem_response(
+            request,
+            status=404,
+            title="Watchlist not found",
+            detail=str(exc),
+            code=CODE_NOT_FOUND,
+        )
+
+    @app.exception_handler(WatchlistItemNotFound)
+    async def _item_missing(request: Request, exc: WatchlistItemNotFound):
+        return problem_response(
+            request,
+            status=404,
+            title="Job not on watchlist",
+            detail=str(exc),
+            code=CODE_NOT_FOUND,
+        )
+
+    @app.exception_handler(DuplicateResource)
+    async def _duplicate(request: Request, exc: DuplicateResource):
+        """409 Conflict: the request is valid, the current state refuses it.
+
+        Not 422. The body parsed, every field was legal, and the same body would
+        have succeeded a moment earlier — what failed is the *state* of the
+        collection, not the input. 422 would tell a client to fix its request
+        when the fix is to choose a different name or accept that the job is
+        already saved.
+        """
+        return problem_response(
+            request,
+            status=409,
+            title="Conflict",
+            detail=str(exc),
+            code=CODE_DUPLICATE,
+        )
+
+    @app.exception_handler(ApiKeyRequired)
+    async def _unauthorized(request: Request, exc: ApiKeyRequired):
+        """401, with `WWW-Authenticate` because RFC 9110 requires it on a 401.
+
+        401 rather than 403 for a wrong key as well as a missing one: 403 means
+        the credentials were understood and the action is still refused, which
+        implies an identity to refuse. There is exactly one key here and no
+        users, so every failure is "not authenticated".
+
+        The `ApiKey` scheme is not IANA-registered — a strictly correct header
+        would name a registered scheme. It is sent anyway because the alternative
+        is omitting a required header entirely, and this documents the intent.
+        """
+        return problem_response(
+            request,
+            status=401,
+            title="Unauthorized",
+            detail=str(exc),
+            code=CODE_UNAUTHORIZED,
+            headers={"WWW-Authenticate": 'ApiKey realm="jobsapi"'},
         )
 
     @app.exception_handler(DatabaseUnavailable)

@@ -310,6 +310,16 @@ def _never_the_real_database(
     an immediate, obvious failure instead of a machine-dependent one.
     """
     monkeypatch.setenv("JOBSAPI_DB_PATH", str(tmp_path / "must-be-injected.db"))
+
+    # The same guard for the *write* database, and it matters more here. An
+    # un-injected read path fails loudly the moment it cannot find a file. An
+    # un-injected write path succeeds: `appdb.connect` creates what is missing,
+    # so the suite quietly built a real database under the developer's home
+    # directory and every test passed. Caught by looking, not by a failure —
+    # which is the whole argument for pointing the environment somewhere
+    # harmless rather than trusting each test to inject settings.
+    monkeypatch.setenv("JOBSAPI_APP_DB_PATH", str(tmp_path / "app-must-be-injected.db"))
+    monkeypatch.delenv("JOBSAPI_API_KEY", raising=False)
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -330,14 +340,25 @@ def db_path(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def settings(db_path: Path) -> Settings:
-    """Settings pointing at the fixture database, not the environment.
+def app_db_path(tmp_path: Path) -> Path:
+    """A fresh application database per test.
+
+    Only the path: the file itself is created by the lifespan, so every test
+    also exercises `appdb.ensure_schema` for free — the same trick the `client`
+    fixture already plays with the read database's startup check.
+    """
+    return tmp_path / "app.db"
+
+
+@pytest.fixture
+def settings(db_path: Path, app_db_path: Path) -> Settings:
+    """Settings pointing at the fixture databases, not the environment.
 
     Constructed directly rather than via `get_settings()`, which is `lru_cache`d
     and reads the real environment. A test that went through the cache would
     leak configuration between tests.
     """
-    return Settings(db_path=db_path)
+    return Settings(db_path=db_path, app_db_path=app_db_path)
 
 
 @pytest.fixture

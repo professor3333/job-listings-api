@@ -404,3 +404,31 @@ def stats(conn: sqlite3.Connection) -> dict[str, object]:
         "earliest_posted_at": dates["earliest"],
         "latest_posted_at": dates["latest"],
     }
+
+
+def get_jobs_by_ids(
+    conn: sqlite3.Connection, job_ids: list[int]
+) -> dict[int, sqlite3.Row]:
+    """Fetch several jobs at once, keyed by id, for the watchlist join.
+
+    One query for a whole page rather than one per row: the N+1 pattern would
+    turn a 20-item watchlist into 21 round trips to answer one question.
+
+    The `IN (...)` list is built by repeating `?` `len(job_ids)` times. That is
+    not string-interpolating user input — the only thing being generated is the
+    *number* of placeholders, and every value is still bound. It is the standard
+    way to parameterise a variable-length list, because SQL has no syntax for
+    binding one parameter to many values.
+
+    Returns a dict so the caller can look up each id and find nothing for a job
+    that has since been removed from `jobs.db` — the dangling reference that no
+    foreign key can prevent across two database files.
+    """
+    if not job_ids:
+        return {}
+    placeholders = ", ".join("?" * len(job_ids))
+    rows = conn.execute(
+        f"SELECT {_SUMMARY_COLUMNS} FROM jobs WHERE id IN ({placeholders})",
+        job_ids,
+    ).fetchall()
+    return {int(row["id"]): row for row in rows}
