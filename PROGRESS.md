@@ -11,6 +11,7 @@ and smoke-tested on every push.
 **Releases:** [v0.6.0](https://github.com/professor3333/job-listings-api/releases/tag/v0.6.0)
 · [v0.7.0](https://github.com/professor3333/job-listings-api/releases/tag/v0.7.0)
 · [v0.8.0](https://github.com/professor3333/job-listings-api/releases/tag/v0.8.0)
+· [v0.8.1](https://github.com/professor3333/job-listings-api/releases/tag/v0.8.1)
 
 Build 3 of Stage 0. A FastAPI service over the dataset Build 2 collected,
 exposed as a REST API with real input validation. The exit criterion was **"the
@@ -158,6 +159,40 @@ edit — the reasoning that left `v0.6.0` alone does not extend to it.
 | lint / format | ✅ `ruff check` clean, `ruff format --check` clean on 35 files |
 | CI green | ✅ both jobs, `main` at `3468048` |
 | release / tag | ✅ v0.8.0, annotated tag + GitHub release |
+
+---
+
+## Ship sequence — v0.8.1, run 2026-09-02
+
+The first run of the sequence with a **version check** in it, added because
+`v0.8.0` shipped an app reporting `0.7.0` and nothing in the old sequence would
+have noticed. The check is not "the tests pass" — the version was internally
+consistent and wrong.
+
+| Step | Result |
+|------|--------|
+| tests | ✅ 214 passed (14 new) |
+| lint / format | ✅ clean |
+| CI green on the merge commit | ✅ both jobs, `c1fc7c4` |
+| **version check — running server** | ✅ `/openapi.json` `info.version` = `0.8.1`, startup log = `0.8.1` |
+| live behaviour, real dataset | ✅ `currency` `usd`/`USD`/`dollars` → 200/200/422; `limit` 100/101 → 200/422; `/runs?colour=red` → 422 |
+| published schema | ✅ `currency` carries `^[A-Za-z]{3}$`; `limit` carries `minimum: 1`, `maximum: 100` |
+| release / tag | ✅ v0.8.1, annotated, on the **merge commit** — the thing a `checkout` reproduces |
+
+**Two rules this run fixed in place.**
+
+*Tag the merge commit, after CI is green on `main`* — not the branch head. The
+tag has to name what `git clone && git checkout v0.8.1` actually reproduces.
+
+*Fix forward; never move a published tag.* `v0.8.0` permanently ships an app
+reporting `0.7.0`. Moving the tag would make one published name mean two
+different things depending on when a client fetched — and `git fetch` refuses to
+clobber a tag a client already holds, so the two copies would disagree silently,
+with no signal that anything happened. A wrong version string is visible and
+explicable; a tag that means different things to different people is neither.
+The [v0.8.0 release notes](https://github.com/professor3333/job-listings-api/releases/tag/v0.8.0)
+now carry a known-issue notice instead — the release body is where a stranger
+looks, and editing it leaves the tag object untouched.
 
 ---
 
@@ -316,6 +351,14 @@ All eleven met.
   `sqlite`, `rest-api`, `pydantic`, `openapi`. A repository setting rather than
   a file, so it is not in the PR's diff — `gh repo edit --add-topic` writes it
   straight to GitHub.
+- **The ship sequence now has a version check**, added 2026-09-02 after
+  `v0.8.0` shipped an app reporting `0.7.0`: start the built artefact, read
+  `info.version` from `/openapi.json` and the startup log, and compare it to the
+  tag about to be cut. `/health` deliberately carries no version — its
+  `Literal["ok"]` contract is narrow on purpose and was not widened to make the
+  check convenient. The step lives in `CLAUDE.md`, which is untracked and
+  therefore local-only, so it is recorded here as well: this file is the copy
+  that travels with a clone.
 - ~~`CLAUDE.md` cited a commit that no longer exists~~ **Fixed on disk
   2026-09-02**, both references now naming `cf6594b` — but *not* in PR #12's
   diff, because `CLAUDE.md` is excluded in `.git/info/exclude` and has never
