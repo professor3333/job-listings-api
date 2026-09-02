@@ -8,11 +8,21 @@ whose name says which guarantee it was.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
 from jobsapi.problems import PROBLEM_MEDIA_TYPE
-from jobsapi.schemas import Q_MAX_LENGTH
+from jobsapi.schemas import (
+    LIMIT_DEFAULT,
+    LIMIT_MAX,
+    LIMIT_MIN,
+    Q_MAX_LENGTH,
+    WIRE_CURRENCY_PATTERN,
+    JobFilters,
+    Pagination,
+)
 
 
 class TestOversizedInput:
@@ -116,3 +126,133 @@ class TestNullSerialisation:
         for field in ("location", "salary_min", "salary_max", "currency"):
             assert field in row
             assert row[field] is None
+
+
+class TestTheLimitCapIsPinnedAtItsBoundary:
+    """The cap is a published number, so something must hold it to that number.
+
+    Before these tests the suite proved only that `limit=1000` was refused and
+    `limit=0` was refused. Every value between 21 and 999 would have passed the
+    entire suite, so the cap could have drifted to any of them — including by
+    accident — without a single failure. Testing far from a boundary does not
+    test the boundary.
+    """
+
+    def test_the_cap_itself_is_accepted(self, client: TestClient) -> None:
+        assert client.get("/jobs", params={"limit": LIMIT_MAX}).status_code == 200
+
+    def test_one_past_the_cap_is_refused(self, client: TestClient) -> None:
+        response = client.get("/jobs", params={"limit": LIMIT_MAX + 1})
+        assert response.status_code == 422
+        assert response.json()["errors"][0]["field"] == "limit"
+
+    def test_the_floor_itself_is_accepted(self, client: TestClient) -> None:
+        assert client.get("/jobs", params={"limit": LIMIT_MIN}).status_code == 200
+
+    def test_one_below_the_floor_is_refused(self, client: TestClient) -> None:
+        assert client.get("/jobs", params={"limit": LIMIT_MIN - 1}).status_code == 422
+
+    def test_the_cap_is_the_number_the_contract_publishes(self) -> None:
+        """Deliberately hard-coded, and the only test here that is.
+
+        Importing `LIMIT_MAX` everywhere proves the code agrees with itself,
+        which it always will. It cannot notice the constant being changed to
+        250 — every other test in this class would follow it happily. Only a
+        literal can hold the value to what `docs/api.md` promises a client.
+        """
+        assert (LIMIT_MIN, LIMIT_MAX, LIMIT_DEFAULT) == (1, 100, 20)
+
+    def test_the_default_applies_when_the_key_is_absent(
+        self, client: TestClient
+    ) -> None:
+        body = client.get("/jobs").json()
+        assert body["limit"] == LIMIT_DEFAULT
+
+    def test_an_empty_value_is_not_the_default(self, client: TestClient) -> None:
+        """`?limit=` is the empty string, not an absent key.
+
+        The two look alike to a client and resolve differently: an absent key
+        takes the default, an empty one fails coercion. Asserting it stops the
+        distinction being "fixed" into a default later.
+        """
+        assert client.get("/jobs?limit=").status_code == 422
+
+
+class TestTheGeneratedSchemaPublishesWhatIsEnforced:
+    """`/openapi.json` is the contract a generated client compiles against.
+
+    A constraint the service enforces but the schema omits cannot be honoured
+    by any client: it discovers the rule by being refused. That is the inverse
+    of the failure this build is built to avoid, and it is not hypothetical —
+    a `BeforeValidator` makes Pydantic withdraw `pattern` from the schema.
+    """
+
+    @staticmethod
+    def _query_param(client: TestClient, path: str, name: str) -> dict:
+        spec = client.get("/openapi.json").json()
+        for parameter in spec["paths"][path]["get"]["parameters"]:
+            if parameter["name"] == name:
+                return parameter
+        raise AssertionError(f"{name} is not a documented parameter of {path}")
+
+    def test_currency_publishes_a_pattern(self, client: TestClient) -> None:
+        schema = str(self._query_param(client, "/jobs", "currency")["schema"])
+        assert "pattern" in schema
+
+    def test_the_published_pattern_accepts_what_the_service_accepts(
+        self, client: TestClient
+    ) -> None:
+        """The wire pattern, not the post-normalisation one.
+
+        Publishing `^[A-Z]{3}$` would be a second lie in the other direction:
+        it would tell a client that `usd` is invalid, when this API accepts it.
+        """
+        published = re.compile(WIRE_CURRENCY_PATTERN)
+        for accepted in ("usd", "USD", "uSd"):
+            assert published.match(accepted)
+            assert client.get("/jobs", params={"currency": accepted}).status_code == 200
+
+    def test_the_published_pattern_refuses_what_the_service_refuses(
+        self, client: TestClient
+    ) -> None:
+        published = re.compile(WIRE_CURRENCY_PATTERN)
+        for refused in ("dollars", "us", " usd "):
+            assert not published.match(refused)
+            assert client.get("/jobs", params={"currency": refused}).status_code == 422
+
+    def test_the_limit_bounds_are_published(self, client: TestClient) -> None:
+        schema = self._query_param(client, "/jobs", "limit")["schema"]
+        assert schema.get("maximum") == LIMIT_MAX
+        assert schema.get("minimum") == LIMIT_MIN
+
+
+class TestUnknownParametersAreRefusedOnEveryListEndpoint:
+    """`extra="forbid"` is declared once, on `Pagination`, and inherited.
+
+    It lived on `JobFilters` once, which meant `?colour=red` was a 422 on
+    `/jobs` and silently ignored on `/runs`. These tests pin the rule to every
+    endpoint that paginates, so a copy re-appearing on one subclass cannot go
+    unnoticed again.
+    """
+
+    @pytest.mark.parametrize("path", ["/jobs", "/runs"])
+    def test_an_unknown_parameter_is_refused(
+        self, client: TestClient, path: str
+    ) -> None:
+        response = client.get(path, params={"colour": "red"})
+        assert response.status_code == 422
+        error = response.json()["errors"][0]
+        assert error["field"] == "colour"
+        assert error["rule"] == "extra_forbidden"
+
+    def test_the_rule_lives_on_the_base(self) -> None:
+        """Asserted on `Pagination`, which is the placement that matters.
+
+        There is no runtime way to tell "inherited" from "restated": Pydantic's
+        metaclass merges `model_config` down the MRO and writes the result onto
+        every subclass, so it is present in `JobFilters.__dict__` either way.
+        What *is* detectable is the rule leaving the base — the failure that
+        actually shipped once, taking `/runs` with it.
+        """
+        assert Pagination.model_config["extra"] == "forbid"
+        assert JobFilters.model_config["extra"] == "forbid"

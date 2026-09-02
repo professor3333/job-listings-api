@@ -174,11 +174,34 @@ are Build 2's bookkeeping.
 | `seniority` | enum | `intern`,`junior`,`senior`,`staff`,`lead`,`principal`,`head`,`director`. | — |
 | `salary_min_gte` | int | `>= 0`. Matches `salary_min >= value`. | — |
 | `salary_max_lte` | int | `>= 0`. Matches `salary_max <= value`. | — |
-| `currency` | str | ISO 4217, 3 letters. Case-insensitive, matched uppercase. | — |
+| `currency` | str | ISO 4217, 3 letters, `^[A-Za-z]{3}$`. Case-insensitive, matched uppercase. | — |
 | `posted_after` | date | ISO `YYYY-MM-DD`, inclusive. | — |
 | `posted_before` | date | ISO `YYYY-MM-DD`, inclusive. | — |
 | `sort` | enum | `posted_at`,`id`,`company`,`title`,`salary_min`,`salary_max`. | `posted_at` |
 | `order` | enum | `asc` / `desc`. | `desc` |
+
+### The two `currency` patterns
+
+`currency` is normalised to uppercase before it is validated, so two different
+patterns are true of it and the distinction is deliberate:
+
+| | pattern | what it describes |
+| --- | --- | --- |
+| published in `/openapi.json` | `^[A-Za-z]{3}$` | what a **client may send** |
+| enforced after normalisation | `^[A-Z]{3}$` | what the **filter matches on** |
+
+The published one is the looser of the two because `?currency=usd` is accepted.
+Publishing the enforced pattern instead would tell a generated client that a
+request this API honours is invalid.
+
+This is stated here because the schema could not state it alone. Pydantic
+withdraws `pattern` from the generated schema whenever a `BeforeValidator` is
+attached — the declared constraint stops being true of the raw input, so it is
+dropped rather than published falsely. Until this was corrected,
+`/openapi.json` described `currency` as an unconstrained string while the
+service refused `dollars`: a rule enforced but unpublished, which a generated
+client can only discover by being rejected. The pattern is now republished
+explicitly via `json_schema_extra`.
 
 Filters combine with **AND**.
 

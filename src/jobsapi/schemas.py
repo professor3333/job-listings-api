@@ -111,12 +111,26 @@ def _upper(value: Any) -> Any:
     return value.upper() if isinstance(value, str) else value
 
 
+# `pattern` below is checked *after* `_upper`, so it describes the normalised
+# value — but a `BeforeValidator` makes Pydantic drop `pattern` from the
+# generated schema entirely, because a transform means the declared constraint
+# no longer describes what is legal on the wire. The constraint was therefore
+# enforced but unpublished: `/openapi.json` said "any string" while the service
+# rejected `dollars`, so a generated client could not know its request was
+# invalid until the server said so.
+#
+# `json_schema_extra` puts a pattern back — the *wire* pattern, which is
+# case-insensitive, not the post-normalisation one. Publishing `^[A-Z]{3}$`
+# would swap one lie for another by rejecting `usd`, which this API accepts.
+WIRE_CURRENCY_PATTERN = r"^[A-Za-z]{3}$"
+
 Currency = Annotated[
     str,
     BeforeValidator(_upper),
     Field(
         pattern=r"^[A-Z]{3}$",
         description="ISO 4217 code. Case-insensitive; matched uppercase.",
+        json_schema_extra={"pattern": WIRE_CURRENCY_PATTERN},
     ),
 ]
 
@@ -152,9 +166,14 @@ class JobFilters(Pagination):
     sending unknown parameters break when they would otherwise have been
     tolerated; for a read-only service with a generated client contract, that
     trade is worth making.
-    """
 
-    model_config = ConfigDict(extra="forbid")
+    The rule itself is *inherited* from `Pagination`, deliberately not restated
+    here. Re-declaring `extra="forbid"` on this class is inert — Pydantic merges
+    `model_config` down the MRO — but it re-creates the exact drift the parent's
+    docstring records as fixed: with a copy on the subclass, changing the parent
+    silently leaves `/jobs` behaving differently from `/runs`. One statement of
+    the rule, in one place.
+    """
 
     q: Annotated[str | None, Field(max_length=Q_MAX_LENGTH)] = None
     source: Source | None = None

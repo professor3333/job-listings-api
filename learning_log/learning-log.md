@@ -926,3 +926,92 @@ true and then checking. The dead settings were removed rather than implemented,
 since the `1..100` bound is a `Field` constraint that `/openapi.json` publishes —
 making it configurable would let a deployment's real limit differ from what its
 own docs promise.
+
+---
+
+## `BeforeValidator` and the schema it silently withdraws
+
+**What broke.** `GET /jobs?currency=dollars` returned a correct `422`, and
+`/openapi.json` described `currency` as `{"type": "string"}` — no pattern, no
+constraint. The service enforced a rule the published contract did not mention.
+Nothing failed: the suite was green, the endpoint was right, and `/docs`
+rendered a sentence a human would follow.
+
+**Why it happened.** The field is declared as:
+
+```python
+Currency = Annotated[str, BeforeValidator(_upper), Field(pattern=r"^[A-Z]{3}$")]
+```
+
+The pattern is checked *after* `_upper`, so it describes the normalised value,
+not the value the client sent. Pydantic knows this, and rather than publish a
+constraint that is false of the wire format, it removes it from the validation
+JSON schema entirely. Isolated by generating two models differing only in the
+validator:
+
+| model | published schema for the field |
+| --- | --- |
+| `Annotated[str, Field(pattern=...)]` | `{"pattern": "^[A-Z]{3}$", "type": "string"}` |
+| `Annotated[str, BeforeValidator(up), Field(pattern=...)]` | `{"type": "string"}` |
+
+The behaviour is correct and deliberate on Pydantic's part. What makes it a
+defect here is that it is silent: nothing in the annotation, the endpoint, or
+the test suite indicates that a published constraint has gone missing.
+
+**What it teaches.** This build rests on "the docs are generated from the types,
+so wrong docs mean wrong types." The exception is that a constraint can be
+*enforced by* the types and still not *reach* the schema. The failure mode is
+not a wrong document but an incomplete one, and incompleteness cannot be
+detected by reading the document — only by comparing it against behaviour.
+
+Note which half survived. `description` passed through untouched, because prose
+asserts nothing a transform could falsify. So the surviving documentation is
+exactly the half no generated client can enforce: a human reading `/docs`
+complies, a compiled client permits anything. The contract quietly degraded
+into advice.
+
+**Where it was applied.** `schemas.py` — `json_schema_extra={"pattern":
+WIRE_CURRENCY_PATTERN}`, publishing `^[A-Za-z]{3}$`. The republished pattern is
+deliberately *not* the enforced one: `^[A-Z]{3}$` would tell clients that `usd`
+is invalid, which this API accepts. Two patterns, because there are genuinely
+two rules — what the wire accepts, and what survives normalisation.
+
+**How to detect it next time.** Assert the schema, not only the response. The
+new tests read `/openapi.json` and check the published pattern against the
+service's real answers in both directions — every string the pattern accepts
+must return `200`, every string it rejects must return `422`. Any constraint
+paired with a `Before`/`After`/`Plain` validator, or any `computed_field`, is
+worth the same check. The general rule: **a status code proves behaviour and
+says nothing about what was published.**
+
+---
+
+## One fact, two files: the version that drifted through a release
+
+**What broke.** After tagging `v0.8.0`, the running service announced `0.7.0` —
+in its startup log and in `info.version` of `/openapi.json`. The second
+occurrence; `PROGRESS.md` records a version mismatch already caught once during
+README verification.
+
+**Why it happened.** The version lived in two places: `pyproject.toml` and a
+hard-coded `version="0.7.0"` argument in `create_app`. Nothing forced them to
+agree, so shipping correctly depended on remembering both. The ship sequence in
+CLAUDE.md has steps for tests, lint, format, clean clone, README, Docker and CI
+— and no step that asks the running app what version it thinks it is.
+
+**What it teaches.** The recurrence is the interesting part. It was fixed once
+by correcting the copy, which repaired that instance and left the mechanism
+intact, so it came back at the next tag. **A duplicated fact is fixed by
+deletion, not by diligence** — as long as two copies exist, the failure is
+scheduled rather than possible.
+
+**Where it was applied.** `main.py` now reads
+`importlib.metadata.version("jobsapi")` with a `PackageNotFoundError` fallback,
+leaving `pyproject.toml` as the only source; bumped to `0.8.1`. The literal was
+removed rather than updated.
+
+**How to detect it next time.** Add the question to the ship sequence: ask the
+built artefact its version and compare it to the tag being cut. `v0.8.0`
+permanently ships an app reporting `0.7.0`; that is now history, fixed forward,
+because moving a published tag to repair a docs-level defect is the thing this
+project already decided against for `v0.6.0`.
