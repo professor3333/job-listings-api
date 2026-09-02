@@ -527,3 +527,55 @@ green run and a file on someone's disk. For anything that writes, the check is
 not the exit code — it is looking at the filesystem afterwards and asking what
 is there now that was not there before.
 
+
+### Documentation fix — stale commit reference — 2026-09-02
+
+**Q1. `git cat-file -t 9172d74` prints `commit`. Why is the reference still
+broken?**
+
+Because `cat-file` answers a different question from the one that matters. It
+asks whether the object exists in *this clone's* object store; the useful
+question is whether it is reachable from a branch anyone else can fetch. The
+scaffold history was rewritten before the first push, so the pre-rewrite commit
+survives locally — held alive by the reflog and not yet garbage-collected — while
+`origin/main` never contained it.
+
+`git merge-base --is-ancestor 9172d74 main` is the check that distinguishes the
+two, and it exits non-zero. The failure mode is the nasty kind: the reference
+verifies perfectly on the machine that wrote it and resolves to nothing on every
+other machine. "It works locally" and "it is in the repository" are separate
+claims, and only the second is what a reader gets.
+
+**Q2. Why is setting the repository topics absent from this PR's diff?**
+
+Because topics are not stored in the repository. They are metadata held by
+GitHub against the repo record, reachable through the REST API — `gh repo edit
+--add-topic` — and nothing in the working tree changes when they are set. So
+there is no file to commit and no way to review the change in a diff.
+
+The general shape is worth keeping: a project's state is split between what
+version control tracks and what the forge holds beside it. Topics, description,
+branch-protection rules, secrets and webhooks all live on the second side. None
+of them survive `git clone`, none appear in a PR, and none are restored by
+checking out an old tag — which is the argument for keeping anything
+load-bearing in the tree, and for not expecting a repository to describe itself
+completely.
+
+**Q3. The `CLAUDE.md` fix is the reason this branch exists, and it is not in the
+branch. Where did it go?**
+
+Onto disk, and no further. `CLAUDE.md` is listed in `.git/info/exclude`, so it
+has never been tracked — `git add -A` skips it silently and `git ls-files
+--error-unmatch` denies knowing it.
+
+`.git/info/exclude` is the third place an ignore rule can live, and the one that
+behaves least like the others. `.gitignore` is committed and therefore shared;
+a global `core.excludesFile` follows the user across repositories; `info/exclude`
+is per-clone, inside `.git/`, and travels nowhere. Nothing in the tree records
+that the rule exists, which is what makes it easy to trip over — the file looks
+present and ordinary in the working directory and is absent from every clone.
+
+So a third category joins Q2's two: tracked content, forge-held metadata, and
+files that are deliberately local. The correct response to hitting the third was
+to leave it alone. Force-adding with `git add -f` would have worked mechanically
+and reversed a decision someone made on purpose.

@@ -200,11 +200,6 @@ All eleven met.
 
 ## Open threads
 
-- **`CLAUDE.md` cites a commit that no longer exists.** Its scaffold-status
-  section names `9172d74`; that object was rewritten and is not reachable from
-  `main`. The scaffold on `main` is `cf6594b`. Harmless, but a reader chasing
-  the reference finds nothing — worth a one-word fix in `CLAUDE.md`, which is
-  yours rather than mine to edit.
 - **`v0.6.0` points at `7834b6d`**, before four documentation commits that
   landed after it. The code at the tag is identical apart from two corrected
   docstrings. Left alone on purpose — retagging for docs is not worth it.
@@ -253,9 +248,20 @@ All eleven met.
   the machine disproved two of the register's own one-liners.
 - ~~`docker build` never run locally~~ **Done 2026-09-02, PR #9.** Table above.
 - ~~Phase 4 skipped~~ **Done, PR #8, released as v0.7.0.**
-- **Repo topics are unset.** Thirty seconds of discoverability: `fastapi`,
-  `python`, `sqlite`, `rest-api`, `pydantic`. Not done because it is yours to
-  choose.
+- ~~Repo topics were unset~~ **Set 2026-09-02, PR #12:** `fastapi`, `python`,
+  `sqlite`, `rest-api`, `pydantic`, `openapi`. A repository setting rather than
+  a file, so it is not in the PR's diff — `gh repo edit --add-topic` writes it
+  straight to GitHub.
+- ~~`CLAUDE.md` cited a commit that no longer exists~~ **Fixed on disk
+  2026-09-02**, both references now naming `cf6594b` — but *not* in PR #12's
+  diff, because `CLAUDE.md` is excluded in `.git/info/exclude` and has never
+  been tracked. That exclusion is local-only, so it does not travel with a
+  clone; the file is simply absent from the repository for everyone else.
+  The old id `9172d74` was not merely stale: the object still resolves in a
+  clone predating the rewrite, so `git cat-file -t` reports a perfectly good
+  commit and the reference looks sound from the machine that wrote it.
+  `git merge-base --is-ancestor` is the check that matters, and it says
+  unreachable from `main`.
 
 ---
 
