@@ -16,30 +16,103 @@ that database, never writes to it, and exposes it as JSON.
 
 ---
 
+## The problem
+
+Build 2 finished with 3,498 job listings in a 64 MB SQLite file on one laptop.
+That file is a dead end for anyone who is not sitting in front of it:
+
+- **Only one machine can use it.** There is no way to query it from a script, a
+  notebook, a phone, or another person's computer without copying the file — and
+  a copy is stale the moment the scraper next runs.
+- **Reading it requires knowing the schema.** `remote` is a nullable integer
+  where `NULL` means "never established" rather than "no". `salary_min` is absent
+  in ~70% of rows. Anyone querying the file directly has to rediscover those
+  facts, and will get them wrong in a way that produces plausible numbers.
+- **Handing someone the file hands them a writable copy.** Nothing stops an
+  accidental `DELETE` against the dataset the scraper spent days building.
+- **The file is live.** The scraper takes an `EXCLUSIVE` lock during its commits,
+  so a naive reader intermittently fails with `database is locked` — and the
+  distinct case where a crashed writer left a hot journal cannot be fixed by
+  retrying at all.
+- **Some columns are far too big to hand back casually.** Descriptions average
+  5.4 KB and reach 33 KB; the change history holds single values of 30,646
+  characters. A careless list endpoint returns megabytes nobody asked for.
+
+**So the job is to turn a private, locked, schema-coupled file into something any
+HTTP client can query safely** — and the hard part is not the endpoints. It is
+the **contract**: what a client is allowed to send, what it gets back, and what
+happens when it sends nonsense.
+
+That contract has to answer questions the file itself never had to:
+
+| Question the file never had to answer | The answer here |
+|---|---|
+| What happens on `?limit=1000`? | `422`, naming the field and the rule — never silently clamped |
+| Does `salary_min_gte=100000` include rows with no salary? | No — documented, because it governs ~70% of the data |
+| What does `?sort=id;DROP TABLE jobs` do? | `422` from an enum allowlist; an identifier can never be a bound parameter |
+| What comes back while the scraper holds the lock? | `503` with `Retry-After` — and a *different* `503` without one when retrying cannot help |
+| What does a client see when something genuinely breaks? | `500` with an opaque body and a `request_id`; the traceback goes to the log, never the response |
+
+The exit criterion for this build was one sentence: **"the API returns correct
+JSON and rejects bad input, and every line is explained."**
+
+---
+
 ## Architecture
 
 The point of this build is the **contract**: what goes in, what comes out, and
 what happens when someone sends garbage. The layout enforces it.
 
+```mermaid
+flowchart TB
+    client(["HTTP client - curl, a generated client, /docs"])
+
+    subgraph proc["jobsapi: one uvicorn worker, one event loop"]
+        mw["middleware<br/>assigns a request id, times the response"]
+        routers["routers/ - jobs, runs, meta, watchlists<br/>path, method, status code - no SQL"]
+        schemas["schemas.py - the public contract<br/>request models in, response models out"]
+        repos["repository.py, watchlist_repository.py<br/>all the SQL, and no knowledge of HTTP"]
+        problems["problems.py<br/>one RFC 9457 envelope for every 4xx and 5xx"]
+    end
+
+    dbro["db.py<br/>mode=ro plus PRAGMA query_only<br/>one connection per request"]
+    dbrw["appdb.py<br/>read-write, WAL, foreign_keys ON<br/>one connection per request"]
+
+    jobsdb[("jobs.db<br/>Build 2 owns it<br/>never written")]
+    appdb[("app.db<br/>this service owns it<br/>watchlists live here")]
+
+    client -->|request| mw
+    mw --> routers
+    routers -->|validate the request| schemas
+    schemas -->|serialise the response| routers
+    routers -->|plain def endpoint, so it runs in the threadpool| repos
+    repos --> dbro
+    repos --> dbrw
+    dbro ==>|SELECT only| jobsdb
+    dbrw ==>|read and write| appdb
+
+    schemas -.->|422, bad input| problems
+    repos -.->|JobNotFound, DuplicateResource, DatabaseBusy| problems
+    problems -.->|application/problem+json| mw
+    mw -->|response, X-Request-ID, X-Response-Time-ms| client
+
+    classDef entry fill:#eef2ff,stroke:#4338ca,color:#1e1b4b
+    classDef layer fill:#f0f9ff,stroke:#0369a1,color:#082f49
+    classDef err fill:#fef2f2,stroke:#b91c1c,color:#450a0a
+    classDef ro fill:#f0fdf4,stroke:#15803d,color:#052e16
+    classDef rw fill:#fffbeb,stroke:#b45309,color:#451a03
+
+    class client,mw entry
+    class routers,schemas,repos layer
+    class problems err
+    class dbro,jobsdb ro
+    class dbrw,appdb rw
 ```
-                  HTTP
-                    │
-   ┌────────────────▼─────────────────┐
-   │ routers/    no SQL lives here    │  path, method, status code
-   ├──────────────────────────────────┤
-   │ schemas.py  the public contract  │  Pydantic: request in, response out
-   ├──────────────────────────────────┤
-   │ repository.py  all the SQL       │  knows nothing about HTTP
-   ├──────────────────────────────────┤
-   │ db.py       one conn per request │  read-only URI, closed on the way out
-   └────────────────┬─────────────────┘
-                    │
-        ┌───────────┴───────────┐
-        │                       │
-  jobs.db (mode=ro)      app.db (read-write)
-  Build 2 owns it        this service owns it
-  never written          watchlists live here
-```
+
+Read it as two claims. **Downwards**, each layer knows only the one beneath it —
+a router never sees SQL and a repository never sees HTTP. **Sideways**, the two
+databases are reached through different modules with different modes, so the
+write path cannot touch the read database even by mistake.
 
 Four rules hold it together:
 
