@@ -10,7 +10,14 @@ from datetime import date, datetime
 from enum import StrEnum
 from typing import Annotated, Any
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    computed_field,
+    model_validator,
+)
 from pydantic_core import PydanticCustomError
 
 # Bounds live here rather than in the route signature so the contract is
@@ -288,14 +295,25 @@ class JobChangePage(BaseModel):
 class RunSummary(BaseModel):
     """One scrape run.
 
-    Deliberately carries no `duration_seconds`. Build 2 stamps `finished_at`
-    from the same value as `started_at` on the success path — equal in 62 of 63
-    finished runs, the exception being a `failed` run with a real 3.9s duration.
-    A computed field would therefore read 0.0 for every successful run and
-    plausibly non-zero for a failed one: not obviously broken, just quietly
-    wrong, which is the harder kind to notice. The two timestamps are exposed
-    raw so a client can see the equality itself. Filed as a Build 2 bug, not
-    worked around here.
+    `duration_seconds` is **nullable, and null means "not measurable"** rather
+    than "zero". Build 2 used to stamp `finished_at` from the same value as
+    `started_at` on the success path, so 62 of the first 63 finished runs
+    recorded a duration of exactly zero. That was fixed upstream in
+    `job-listing-scraper@1aead71` (2026-09-02) and every run since carries a
+    real elapsed time — but the fix is not retroactive, and the lost
+    measurements cannot be recovered.
+
+    So the table permanently holds two eras, and this field has to tell them
+    apart. The discriminator is exact equality: two timestamps identical to the
+    microsecond are the upstream bug's signature, not a plausible measurement of
+    work that fetched pages over a network. Those rows report `null`. Runs still
+    in progress report `null` too, having no end to measure from.
+
+    Reporting `0.0` for the legacy rows was the alternative, and it is the
+    reason this field was omitted entirely until now: a confident zero is worse
+    than an absent value, because nothing in the response contradicts it. `null`
+    is the honest answer to "how long did this take", and both raw timestamps
+    stay in the response so a client can check the arithmetic.
     """
 
     id: int
@@ -306,6 +324,30 @@ class RunSummary(BaseModel):
     rows_parsed: int | None = None
     pages_fetched: int | None = None
     page_cap: int | None = None
+
+    @computed_field(  # type: ignore[prop-decorator]
+        description=(
+            "Elapsed seconds, or null when the run has not finished or its "
+            "timestamps predate the upstream fix that made them distinct. "
+            "Null means unknown, never zero."
+        )
+    )
+    @property
+    def duration_seconds(self) -> float | None:
+        """Derived here, not in SQL.
+
+        The two columns are already parsed into `datetime` by the time this
+        runs, so subtraction is exact and timezone-aware. Computing it in SQL
+        would mean `julianday()`, which converts to a float day number and
+        loses the microseconds that this field's whole discrimination rests on.
+
+        `<=` rather than `==` because a `finished_at` *before* its `started_at`
+        is not a duration either — it would serialise as a negative number, and
+        no client should have to defend against that.
+        """
+        if self.finished_at is None or self.finished_at <= self.started_at:
+            return None
+        return (self.finished_at - self.started_at).total_seconds()
 
 
 class RunPage(BaseModel):

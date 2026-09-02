@@ -417,8 +417,16 @@ never has to guess which of twelve filters was wrong.
 | GET | `/jobs/{job_id}` | `200` | `JobDetail` — the only place `description` is served |
 | GET | `/jobs/{job_id}/changes` | `200` | `JobChangePage` — field-level edit history |
 | GET | `/sources` | `200` | `list[SourceSummary]` — counts and last run status |
-| GET | `/runs` | `200` | `RunPage` — scrape run history |
+| GET | `/runs` | `200` | `RunPage` — scrape run history, with a nullable `duration_seconds` |
 | GET | `/stats` | `200` | `Stats` — counts, null coverage, tri-state split |
+
+**`duration_seconds` is null when unknown, never zero.** Until 2026-09-02 the
+scraper stamped both ends of a run from one clock reading, so most historical
+runs have `finished_at` exactly equal to `started_at`. That is reported as
+`null` rather than `0.0`, because a confident zero would read as "scrapes are
+instantaneous" and nothing else in the response would contradict it. Runs still
+in progress are null too. Both raw timestamps are always returned, so you can
+check the arithmetic yourself. See `docs/api.md` for the full reasoning.
 
 ### Watchlists (the write path)
 

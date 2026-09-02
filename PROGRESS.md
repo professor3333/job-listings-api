@@ -209,12 +209,13 @@ All eleven met.
   A loud, documented failure rather than a filter that silently matches
   nothing — but it is a coupling, recorded in `docs/api.md` under "Known
   coupling".
-- **`/runs` still omits `duration_seconds`**, because Build 2 stamps
-  `finished_at` from `started_at`. Filed as `job-listing-scraper#29` on
-  2026-09-02, with the exact lines — that repository is private, so the issue is
-  not linked here; it would 404 for everyone but its owner. When the fix lands,
-  this endpoint can gain the field — a reader does not launder its source's
-  bugs, so it waits.
+- **The `runs` table permanently holds two eras.** Build 2's zero-duration bug
+  was fixed upstream on 2026-09-02 (`job-listing-scraper@1aead71`, issue #29
+  closed), but not retroactively: 62 of 71 runs still carry `finished_at`
+  exactly equal to `started_at`, and those measurements are unrecoverable.
+  `/runs` now reports `duration_seconds`, using exact timestamp equality to
+  tell the eras apart and returning `null` — never `0.0` — for the old ones.
+  The ratio improves on its own as new runs accumulate; it never reaches zero.
 - **The `/sources` LEFT JOIN is defensive, not load-bearing.** All eight
   sources appear in both tables today, so it is currently indistinguishable
   from an inner join. Worth keeping; worth knowing it is untested by real data.
@@ -249,6 +250,11 @@ All eleven met.
   the machine disproved two of the register's own one-liners.
 - ~~`docker build` never run locally~~ **Done 2026-09-02, PR #9.** Table above.
 - ~~Phase 4 skipped~~ **Done, PR #8, released as v0.7.0.**
+- ~~`/runs` omitted `duration_seconds`, blocked on Build 2~~ **Unblocked and
+  shipped 2026-09-02, PR #14.** The upstream fix had already landed an hour
+  after the issue was filed and nobody had closed it; verified against the real
+  dataset (8 post-fix runs, all with real elapsed times) before closing #29.
+  The field is nullable because the fix could not be retroactive.
 - ~~The README sent strangers to four 404s~~ **Fixed 2026-09-02, PR #13.**
   Three `README.md` links and one in `PROGRESS.md` pointed at the private
   `job-listing-scraper`. Shipped in v0.6.0 and missed by two ship sequences,

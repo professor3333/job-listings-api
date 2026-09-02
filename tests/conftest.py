@@ -214,11 +214,15 @@ RUNS: list[tuple] = [
         8,
         1,
     ),
+    # Run 3 is the post-fix era: a real elapsed time, so `duration_seconds` has
+    # a positive case to prove and not just nulls. Runs 1 and 2 keep the
+    # identical timestamps that the upstream bug produced, and run 4 never
+    # finished. All three are the shapes the field has to tell apart.
     (
         3,
         "python_org",
         "2026-08-31T03:45:40+00:00",
-        "2026-08-31T03:45:40+00:00",
+        "2026-08-31T03:45:44.250000+00:00",
         "partial",
         1,
         1,

@@ -315,11 +315,32 @@ A source with jobs but no run row still appears, with null run fields.
 
 Paginated run history, newest first.
 
-**No duration is reported.** Build 2 stamps `finished_at` from the same value as
-`started_at`, so every completed run shows zero elapsed. A computed
-`duration_seconds` would be `0.0` for all of them — confidently wrong. Both
-timestamps are returned raw so a client can see the problem for itself. This is
-an upstream bug to fix in Build 2's repo, not to launder here.
+**`duration_seconds` is nullable, and null means *unknown*, never zero.**
+
+Until 2026-09-02, Build 2 stamped both ends of a run from a single clock
+reading, so 62 of the first 63 finished runs recorded `finished_at` exactly
+equal to `started_at`. That was fixed upstream
+(`job-listing-scraper@1aead71`), and every run since carries a real elapsed
+time — but the fix could not be retroactive. The lost measurements are gone,
+so the table permanently holds two eras and this endpoint has to tell them
+apart.
+
+The discriminator is **exact equality of the two timestamps**. Identical to the
+microsecond is the bug's signature, not a plausible measurement of work that
+fetched pages over a network. A run still in progress is null as well, having
+no end to measure from. `finished_at` *earlier* than `started_at` is null too:
+it is not a duration either, and no client should have to defend against a
+negative number.
+
+Reporting `0.0` was the alternative and is why this field did not exist until
+now. A confident zero is worse than an absent value: nothing else in the
+response contradicts it, so a reader concludes scrapes are instantaneous. Both
+timestamps stay in the response, so a client can always check the arithmetic
+rather than trust the derived field.
+
+The value is computed in `RunSummary`, not in SQL. By then both columns are
+`datetime` objects and the subtraction is exact; `julianday()` would convert to
+a float day number and lose the microseconds the whole discrimination rests on.
 
 ---
 

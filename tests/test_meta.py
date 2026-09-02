@@ -55,17 +55,50 @@ class TestRuns:
         assert body["total"] == 4
         assert [r["id"] for r in body["items"]] == [4, 3, 2, 1]
 
-    def test_no_duration_is_reported(self, client: TestClient) -> None:
+    def _run(self, client: TestClient, run_id: int) -> dict:
+        items = client.get("/runs").json()["items"]
+        return next(r for r in items if r["id"] == run_id)
+
+    def test_a_measured_run_reports_its_elapsed_seconds(
+        self, client: TestClient
+    ) -> None:
+        """Run 3 finished 4.25s after it started, and says so."""
+        assert self._run(client, 3)["duration_seconds"] == 4.25
+
+    def test_legacy_zero_duration_rows_report_null_not_zero(
+        self, client: TestClient
+    ) -> None:
         """The upstream bug this API refuses to launder.
 
-        Build 2 stamps `finished_at` from the same value as `started_at`, so a
-        computed duration would be 0.0 for every completed run. Publishing that
-        would be confidently wrong; omitting it and exposing both timestamps
-        lets a client see the problem for itself.
+        Build 2 stamped both ends of a run from one clock reading until
+        2026-09-02, so runs 1 and 2 carry identical timestamps. `0.0` is the
+        arithmetic answer and the wrong one: nothing in the response would
+        contradict it, and a client would conclude scrapes are instantaneous.
+        Null says "unknown", which is true.
         """
-        run = client.get("/runs").json()["items"][-1]
-        assert "duration_seconds" not in run
-        assert run["started_at"] == run["finished_at"]
+        for run_id in (1, 2):
+            run = self._run(client, run_id)
+            assert run["started_at"] == run["finished_at"]
+            assert run["duration_seconds"] is None
+
+    def test_an_unfinished_run_reports_null_duration(self, client: TestClient) -> None:
+        """No end to measure from — null for a different reason, same answer."""
+        run = self._run(client, 4)
+        assert run["finished_at"] is None
+        assert run["duration_seconds"] is None
+
+    def test_duration_is_declared_in_the_openapi_schema(
+        self, client: TestClient
+    ) -> None:
+        """A computed field still has to appear in the contract.
+
+        `response_model` generates the schema, so a field that exists only at
+        runtime would make `/docs` lie about the shape of the response.
+        """
+        schema = client.get("/openapi.json").json()
+        prop = schema["components"]["schemas"]["RunSummary"]["properties"]
+        assert "duration_seconds" in prop
+        assert prop["duration_seconds"]["readOnly"] is True
 
     def test_running_row_has_null_finished_at(self, client: TestClient) -> None:
         assert client.get("/runs").json()["items"][0]["finished_at"] is None

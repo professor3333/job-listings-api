@@ -19,10 +19,11 @@ router = APIRouter(prefix="/runs", tags=["meta"])
     response_model=RunPage,
     summary="List scrape runs",
     description=(
-        "Run history, newest first. No duration is reported: the source data "
-        "stamps `finished_at` from the same value as `started_at`, so every "
-        "completed run would show zero elapsed. Both timestamps are returned "
-        "raw so a client can see that for itself."
+        "Run history, newest first. `duration_seconds` is null when the run "
+        "has not finished, or when its timestamps are identical — the "
+        "signature of an upstream bug, fixed on 2026-09-02, that stamped both "
+        "ends of a run from one clock reading. Null means unknown, never zero. "
+        "Both timestamps are returned raw so a client can check the arithmetic."
     ),
 )
 def list_runs(
