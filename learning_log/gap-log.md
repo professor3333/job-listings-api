@@ -673,3 +673,67 @@ anomalous row is reported as unknown — which is what it is. The two raw
 timestamps remain in the response either way, so nothing is concealed; the
 anomaly is still visible to anyone who looks, just not laundered into a
 plausible-looking figure.
+
+### Cutting `v0.8.0` — 2026-09-02
+
+No new code. The decision worth recording is *when a tag moves*, because this
+repo had already answered it the other way once and the two answers look
+contradictory until the rule behind them is written down.
+
+**Q1. `v0.6.0` was deliberately left pointing at a commit four documentation
+commits behind `main`. Twelve commits later, `v0.8.0` was cut. What is the rule
+that produces both answers?**
+
+A tag names a version of the *contract*, not a state of the working tree. The
+question is never "has anything changed since the last tag" — something always
+has — it is "could a client tell?"
+
+For `v0.6.0`, the answer was no: the commits after it corrected two docstrings
+and some prose. A client consuming the API cannot observe either, so a new
+version would name a distinction that does not exist, and retagging would move
+a published reference for no gain.
+
+For PR #14, the answer was yes: `duration_seconds` is a new field in the `/runs`
+response body. Anyone who generated a client from `/openapi.json` at `v0.7.0`
+has a model that no longer describes what the service returns. That is exactly
+what a version number exists to communicate. **Documentation moves the tip of
+the branch; a change to the contract moves the tag.**
+
+The failure mode being avoided is the untagged feature — twelve commits where
+the newest release quietly does not match `main`, so "which version has the
+duration field?" has no answer anyone can look up.
+
+**Q2. Why `0.8.0` and not `0.7.1`?**
+
+Under semantic versioning the minor is for additive, backwards-compatible
+change and the patch is for fixes that alter no interface. `duration_seconds`
+adds a field without removing or renaming one — every `v0.7.0` client keeps
+working, because a JSON parser ignores keys it was not expecting. So: additive,
+compatible, minor.
+
+`0.7.1` would have claimed nothing new is there, which is precisely the thing a
+consumer needs to know. The nullability is not what decides this — a nullable
+new field is still a new field.
+
+The leading `0.` is doing real work too: it signals the contract is not yet
+frozen, which is honest for a build whose `source` enum is still coupled to
+another repository's data.
+
+**Q3. `git tag -a` rather than a bare `git tag`. What is the difference, and
+why does it matter here?**
+
+A lightweight tag is a ref — a file containing a commit id, and nothing else. An
+annotated tag creates a real object in the database with a tagger, a date, a
+message, and its own id, which the ref then points at.
+
+The practical consequences: `git describe` prefers annotated tags; `git tag -n`
+can show a message only if there is one; and the tag records *who* cut the
+release and *when*, which a lightweight tag cannot, since its only content is
+the commit it points to. `gh release create --verify-tag` also refuses to
+invent a tag that does not already exist — the tag is pushed first, then the
+release is attached to it, so the release notes can never end up describing a
+tag nobody can check out.
+
+For a release that a stranger might read months later, the message on the tag is
+the only explanation that travels with a `git clone`. GitHub release notes live
+on the website; the annotation lives in the repository.
