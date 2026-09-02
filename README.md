@@ -497,6 +497,16 @@ serves rows from the read-only mounted volume, still returns 422 for bad input,
 runs as uid 1001, that the write path works end to end inside the image, and that
 a write against `/data/jobs.db` is still refused afterwards.
 
+**Verified on arm64 against the real dataset, 2026-09-02** — CI only ever sees a
+five-row demo database on linux/amd64, so this is the part it cannot check:
+image built on `linux/arm64` (266 MB), `/jobs` reporting `total: 3498` across all
+eight sources, `/stats` at 3,498 jobs · 63 runs · 3,592 changes, `limit=0` still
+a 422, the write path creating a watchlist and attaching a real job, uid 1001,
+`PRAGMA`-level refusal of a write to `/data/jobs.db`, healthcheck reaching
+`healthy`, JSON logs arriving on stdout unbuffered, and `docker stop` returning
+in 0.64s with exit code 0 — which is the exec-form `CMD` forwarding `SIGTERM`
+rather than the container being `SIGKILL`ed after the ten-second timeout.
+
 ## Development
 
 ```bash
