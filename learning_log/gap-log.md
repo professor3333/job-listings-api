@@ -617,3 +617,59 @@ itself.
 The rule worth keeping: a public artefact may *credit* a private one, but must
 never *depend* on it for content the public artefact is answerable for. Credit
 is a courtesy and survives being unresolvable; a dependency is a hole.
+
+### `/runs` gains `duration_seconds` — 2026-09-02
+
+**Q1. The subtraction is one line of SQL. Why is it in `RunSummary` instead?**
+
+Because SQLite has no date type, and the arithmetic would have to go through
+`julianday()`, which returns a Julian day *number* — a float counting days.
+Converting a microsecond back out of that means dividing by 86,400 and then
+multiplying it back, and the format's precision is not spent where this field
+needs it: the whole discrimination rests on telling "identical to the
+microsecond" from "0.000001 apart".
+
+By the time `RunSummary` is constructed, Pydantic has already parsed both
+columns into timezone-aware `datetime` objects, where subtraction is exact and
+returns a `timedelta`. So the value is derived where the types are richest.
+
+The general rule this is an instance of: `repository.py` returns a projection
+of stored columns, and anything *derived* belongs with the contract. Pushing
+derivation into SQL would also have made the field impossible to test without a
+database.
+
+**Q2. `null` and `0.0` are both defensible for a legacy row. Why is `null`
+right, given the arithmetic really does produce zero?**
+
+Because the question the field answers is "how long did this run take", and for
+those rows the honest answer is *not known* — the measurement was never taken.
+`0.0` is the arithmetic result of subtracting a number from itself, which is a
+different claim: it asserts the run took no time.
+
+What settles it is that the wrong answer is unfalsifiable from inside the
+response. A client seeing `0.0` on 62 of 71 runs has nothing to contradict it;
+"scrapes are instantaneous" is a coherent reading, and the data agrees. A
+client seeing `null` is told directly that the value is missing and cannot
+accidentally average it, chart it, or sum it. **A confidently wrong number is
+worse than an absent one, because absence announces itself and wrongness does
+not.**
+
+`0.0` would also poison aggregates in a way nulls do not: SQL and most chart
+libraries skip nulls but happily average zeros.
+
+**Q3. Why does the discriminator use `<=` rather than `==`, when the bug only
+ever produced exact equality?**
+
+`==` would be sufficient for the bug that exists. `<=` also covers a
+`finished_at` that precedes its `started_at` — impossible from correct code,
+reachable through a clock adjustment, a timezone handling error upstream, or a
+hand-edited row.
+
+The reasoning is about what each choice costs when it is wrong. With `==`, an
+inverted pair serialises as a *negative* duration: a number that passes schema
+validation, is not obviously absurd in a table, and pushes the problem onto
+every client to defend against. With `<=`, the worst case is that a genuinely
+anomalous row is reported as unknown — which is what it is. The two raw
+timestamps remain in the response either way, so nothing is concealed; the
+anomaly is still visible to anyone who looks, just not laundered into a
+plausible-looking figure.
