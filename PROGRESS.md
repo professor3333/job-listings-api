@@ -5,11 +5,12 @@ Running status of the build. Updated by Claude as work lands.
 **Last updated:** 2026-09-02
 **Repo:** https://github.com/professor3333/job-listings-api (public)
 **Local path:** `~/code/job-listings-api`
-**Branch:** `main` — **Phases 1, 2, 3, 5, 6 shipped as v0.6.0**; **Phase 4 as v0.7.0**
-**CI:** 🟢 green — 197 tests passing, lint and format clean, Docker image built
+**Branch:** `main` — **Phases 1, 2, 3, 5, 6 shipped as v0.6.0**; **Phase 4 as v0.7.0**; **`/runs` duration as v0.8.0**
+**CI:** 🟢 green — 200 tests passing, lint and format clean, Docker image built
 and smoke-tested on every push.
 **Releases:** [v0.6.0](https://github.com/professor3333/job-listings-api/releases/tag/v0.6.0)
 · [v0.7.0](https://github.com/professor3333/job-listings-api/releases/tag/v0.7.0)
+· [v0.8.0](https://github.com/professor3333/job-listings-api/releases/tag/v0.8.0)
 
 Build 3 of Stage 0. A FastAPI service over the dataset Build 2 collected,
 exposed as a REST API with real input validation. The exit criterion was **"the
@@ -143,6 +144,21 @@ structurally cannot check.
 | logs | ✅ JSON on stdout, unbuffered |
 | `docker stop` | ✅ 0.64s, exit 0 — `SIGTERM` forwarded, not a `SIGKILL` after the timeout |
 
+## Ship sequence — v0.8.0, run 2026-09-02
+
+The `/runs` duration work (PR #14) landed after `v0.7.0` and sat untagged for
+twelve commits. A new response field is a released change, not a documentation
+edit — the reasoning that left `v0.6.0` alone does not extend to it.
+
+| Step | Result |
+|------|--------|
+| tests | ✅ 200 passed (3 new since v0.7.0) |
+| tests with `jobs.db` absent | ✅ 200 passed, `JOBSAPI_DB_PATH` pointed at a path that does not exist |
+| home directory clean afterwards | ✅ `~/.local/share/jobsapi/app.db` predates the run by 11h, mtime unchanged |
+| lint / format | ✅ `ruff check` clean, `ruff format --check` clean on 35 files |
+| CI green | ✅ both jobs, `main` at `3468048` |
+| release / tag | ✅ v0.8.0, annotated tag + GitHub release |
+
 ---
 
 ## Definition of done
@@ -203,7 +219,9 @@ All eleven met.
 - **`v0.6.0` points at `7834b6d`**, before four documentation commits that
   landed after it. The code at the tag is identical apart from two corrected
   docstrings. Left alone on purpose — retagging for docs is not worth it.
-  Overrule if you'd rather it moved.
+  Overrule if you'd rather it moved. The same reasoning is why `v0.8.0` *was*
+  cut: PR #14 added a response field, which a client can observe, so it needed
+  a version to name. Docs move the tip; contract changes move the tag.
 - **The `source` enum is coupled to Build 2's data.** If the scraper adds a
   source, this service rejects it with a 422 until `SOURCE_VALUES` is updated.
   A loud, documented failure rather than a filter that silently matches
