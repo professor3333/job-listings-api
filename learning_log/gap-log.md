@@ -579,3 +579,41 @@ So a third category joins Q2's two: tracked content, forge-held metadata, and
 files that are deliberately local. The correct response to hitting the third was
 to leave it alone. Force-adding with `git add -f` would have worked mechanically
 and reversed a decision someone made on purpose.
+
+### Documentation fix — dead links to a private repository — 2026-09-02
+
+**Q1. The links were followed during the ship sequence and worked. Why were
+they broken?**
+
+Because they were followed from the account that owns the private repository.
+GitHub answers a request for a private resource with `404`, not `403` — it will
+not confirm that a repository exists to someone not entitled to know — so the
+same URL is a working page for one viewer and a missing page for everyone else.
+Nothing about the link's text or the browser's behaviour differs.
+
+This is the general shape of the bug: **a link is a claim about what someone
+else can see, and it cannot be tested from inside your own session.** Ambient
+credentials silently widen what the tester can reach, so the check passes for
+the one person who can never be the victim of its failing. The same trap
+produced the Phase 2 defect, where the suite passed because the developer's
+real database happened to be on the machine. Both are ambient state mistaken
+for a property of the artefact.
+
+The fix is to test the way a stranger arrives — unauthenticated:
+
+    grep -ohE 'https://github\.com/\S+' README.md \
+      | while read -r u; do curl -s -o /dev/null -w "%{http_code} $u\n" -L "$u"; done
+
+**Q2. Three links were removed but the politeness statement survived. Why is
+that the important half?**
+
+Because the README was carrying a *responsibility* by reference. How the data
+was acquired — `robots.txt` honoured, rate limits, no evasion, no personal data
+— is a claim this repository makes about its own contents, and it was delegated
+to a page no reader could open. Deleting the link alone would have left the
+claim unsupported; restating the summary makes the public document answer for
+itself.
+
+The rule worth keeping: a public artefact may *credit* a private one, but must
+never *depend* on it for content the public artefact is answerable for. Credit
+is a courtesy and survives being unresolvable; a dependency is a hole.

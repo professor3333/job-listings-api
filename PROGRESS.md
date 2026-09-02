@@ -103,7 +103,7 @@ Optional per CLAUDE.md, deferred past Phases 5 and 6, then done in full.
 | lint | ✅ `ruff check` clean |
 | format | ✅ `ruff format --check` clean |
 | clean clone test | ✅ fresh clone → `uv sync` → 153 passed → demo DB → server → `/health`, `/jobs`, a 422 |
-| README verification | ✅ every documented command and example request run against the live app |
+| README verification | ⚠️ every documented command and example request run against the live app — but **not the links**, three of which were dead; caught 2026-09-02, see DEBUGGING.md |
 | `docker build` | ⚠️ not run locally at the time — no container runtime on the machine; covered by the new CI job |
 | git status review | ✅ clean tree, branches deleted on merge, stale refs pruned |
 | commit / push | ✅ PRs #5, #6, #7 |
@@ -210,10 +210,11 @@ All eleven met.
   nothing — but it is a coupling, recorded in `docs/api.md` under "Known
   coupling".
 - **`/runs` still omits `duration_seconds`**, because Build 2 stamps
-  `finished_at` from `started_at`. Filed as
-  [job-listing-scraper#29](https://github.com/professor3333/job-listing-scraper/issues/29)
-  on 2026-09-02, with the exact lines. When that lands, this endpoint can gain
-  the field — a reader does not launder its source's bugs, so it waits.
+  `finished_at` from `started_at`. Filed as `job-listing-scraper#29` on
+  2026-09-02, with the exact lines — that repository is private, so the issue is
+  not linked here; it would 404 for everyone but its owner. When the fix lands,
+  this endpoint can gain the field — a reader does not launder its source's
+  bugs, so it waits.
 - **The `/sources` LEFT JOIN is defensive, not load-bearing.** All eight
   sources appear in both tables today, so it is currently indistinguishable
   from an inner join. Worth keeping; worth knowing it is untested by real data.
@@ -248,6 +249,11 @@ All eleven met.
   the machine disproved two of the register's own one-liners.
 - ~~`docker build` never run locally~~ **Done 2026-09-02, PR #9.** Table above.
 - ~~Phase 4 skipped~~ **Done, PR #8, released as v0.7.0.**
+- ~~The README sent strangers to four 404s~~ **Fixed 2026-09-02, PR #13.**
+  Three `README.md` links and one in `PROGRESS.md` pointed at the private
+  `job-listing-scraper`. Shipped in v0.6.0 and missed by two ship sequences,
+  because links were only ever followed from an account that can see the repo.
+  See DEBUGGING.md.
 - ~~Repo topics were unset~~ **Set 2026-09-02, PR #12:** `fastapi`, `python`,
   `sqlite`, `rest-api`, `pydantic`, `openapi`. A repository setting rather than
   a file, so it is not in the PR's diff — `gh repo edit --add-topic` writes it
