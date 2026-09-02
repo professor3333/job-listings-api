@@ -164,6 +164,17 @@ Format: `- YYYY-MM-DD — the concept — where it came up`
   in the developer's home directory and passed. A read path fails when its
   resource is missing; a write path creates it. See DEBUGGING.md. — Phase 4.
 
+- 2026-09-02 — **A tool can be installed and still be invisible to a shell that
+  started before it.** `command -v docker` failed and a scripted sweep of
+  `/usr/local/bin`, `/opt/homebrew/bin` and `/Applications` found nothing, while
+  OrbStack was in fact installed and its daemon running — `/usr/local/bin/docker`
+  existed the whole time. A login shell (`zsh -lic`) found it immediately, as did
+  `ps` and the daemon socket at `/var/run/docker.sock`. The lesson is about
+  evidence, not PATH: "my check found nothing" is weaker than it feels, and
+  reporting it as "nothing is installed" states a conclusion the check cannot
+  support. Cross-check with a *different mechanism* — a login shell, the package
+  manager, the process table — before asserting absence. — Phase 6 follow-up.
+
 ---
 
 ## AI-WRITTEN register
