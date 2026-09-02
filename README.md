@@ -9,9 +9,11 @@ on top.
 It **reads** Build 2's dataset and **never writes to it**. Watchlists — the one
 thing you can create here — live in a separate database this service owns.
 
-The dataset comes from [`job-listing-scraper`](https://github.com/professor3333/job-listing-scraper)
-— 3,498 jobs across 8 sources at the time of writing, with scrape-run history
-and field-level change tracking. This service does not scrape anything. It reads
+The dataset comes from `job-listing-scraper` (Build 2) — 3,498 jobs across 8
+sources at the time of writing, with scrape-run history and field-level change
+tracking. **That repository is private, so this one is written to stand on its
+own:** everything you need to run, test and understand this service is here, and
+`scripts/make_demo_db.py` builds a working database from scratch without it. This service does not scrape anything. It reads
 that database, never writes to it, and exposes it as JSON.
 
 ---
@@ -479,15 +481,14 @@ Every 4xx and 5xx uses the same envelope, with these `code` values:
 
 ## Where the data comes from
 
-Everything served here was collected by
-**[job-listing-scraper](https://github.com/professor3333/job-listing-scraper)**
-(Build 2), which owns the schema. If a column is wrong, that is a bug fixed in
+Everything served here was collected by **`job-listing-scraper`** (Build 2),
+which owns the schema. That repository is private and not publicly browsable, so
+the parts of it that bear on this service are restated below rather than linked. If a column is wrong, that is a bug fixed in
 that repository, not here — this service is a reader and does not launder its
 source's bugs.
 
-That project's own
-[politeness and legal statement](https://github.com/professor3333/job-listing-scraper#politeness-and-legal-statement)
-governs how the data was acquired. In summary: `robots.txt` checked in code
+That project's own politeness and legal statement governs how the data was
+acquired. Reproduced here in summary, since you cannot go and read it: `robots.txt` checked in code
 before the first request on every run, a User-Agent that names the project and
 links the repository, 1–3 second rate limiting with jitter, backoff honouring
 `Retry-After`, a `403` stops the run, **no anti-bot evasion of any kind**, and

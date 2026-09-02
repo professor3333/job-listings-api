@@ -12,6 +12,36 @@ Significant failures only. Newest entry at the top.
 
 ---
 
+## 2026-09-02 — The shipped README sent every stranger to four 404s
+
+- **Problem:** `README.md` linked the companion project `job-listing-scraper`
+  three times — including the politeness-and-legal statement that documents how
+  the data was acquired — and `PROGRESS.md` linked upstream issue #29. That
+  repository is **private**, so all four URLs return **HTTP 404** to everyone
+  except its owner. This shipped in v0.6.0 and survived the Phase 6 ship
+  sequence, the Phase 4 ship sequence, and every review since. It was found
+  while looking at repository visibility for an unrelated reason.
+- **Root cause:** the ship sequence verified *commands*, not *references*. Its
+  README-verification step is recorded as "every documented command and example
+  request run against the live app" — and that was done honestly. But a `curl`
+  in a code block and a Markdown link are different kinds of claim, and only the
+  first was ever executed. The second failure was authentication: the links were
+  certainly clicked at some point from an account that owns the private repo,
+  where they resolve perfectly. Verification performed while logged in cannot
+  see a permission error, so the check that mattered was the one nobody could
+  fail.
+- **Solution:** `README.md` and `PROGRESS.md` — the four links are gone. The
+  provenance is still credited by name, and the politeness statement is now
+  restated in the README as its own content rather than deferred to a page no
+  reader can open. Verified by fetching every remaining `github.com` URL in both
+  files unauthenticated: all six return 200.
+- **Lesson:** a link is an assertion about what someone *else* can see, so it
+  cannot be tested from inside your own session. Anything a public artefact
+  points at needs checking the way a stranger meets it — unauthenticated, from
+  the outside — and a public document should never depend on a private one for
+  content it is responsible for. The defence is cheap: a loop over every URL in
+  the docs asserting a 200, with no credentials loaded.
+
 ## 2026-09-01 — The write path created a database in the developer's home directory, and every test passed
 
 - **Problem:** after `appdb.ensure_schema` was added to the lifespan, `uv run
