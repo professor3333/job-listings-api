@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _package_version
 from time import perf_counter
 from uuid import uuid4
 
@@ -17,6 +19,16 @@ from jobsapi.logging_config import configure_logging, request_id_var
 from jobsapi.problems import PROBLEM_MEDIA_TYPE, register_handlers
 from jobsapi.routers import jobs, meta, runs, watchlists
 from jobsapi.schemas import Problem
+
+# The version is read from installed package metadata rather than written here.
+# It was hard-coded, which meant `pyproject.toml` and this line were two copies
+# of one fact: the app reported 0.7.0 for the whole of the v0.8.0 tag, in its
+# startup log and in `/openapi.json`. One source cannot disagree with itself.
+try:
+    API_VERSION = _package_version("jobsapi")
+except PackageNotFoundError:  # pragma: no cover - only when not installed
+    API_VERSION = "0.0.0+unknown"
+
 
 # Declared once, app-wide, so /openapi.json advertises the problem shape instead
 # of FastAPI's HTTPValidationError. Without this the generated docs would
@@ -99,7 +111,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     """
     app = FastAPI(
         title="Job Listings API",
-        version="0.7.0",
+        version=API_VERSION,
         summary="Read-only REST API over the job-listing-scraper dataset.",
         description=(
             "Errors use RFC 9457 problem details "

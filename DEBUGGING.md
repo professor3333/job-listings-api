@@ -12,6 +12,56 @@ Significant failures only. Newest entry at the top.
 
 ---
 
+## 2026-09-02 — A validator withdrew a constraint from the published schema
+
+- **Problem:** `/jobs?currency=dollars` returned a correct `422`, but
+  `/openapi.json` described `currency` as an unconstrained string. The rule was
+  enforced and unpublished, so a client generated from the spec would send
+  `dollars`, pass its own validation, and be refused by the server for a reason
+  its copy of the contract did not contain. Nothing failed; the suite was green
+  and the endpoint behaved correctly.
+- **Root cause:** `Currency` is `Annotated[str, BeforeValidator(_upper),
+  Field(pattern=r"^[A-Z]{3}$")]`. Pydantic drops `pattern` from the *validation*
+  JSON schema when a `BeforeValidator` is present, because a transform runs
+  ahead of the constraint and the declared pattern therefore no longer describes
+  what is legal on the wire. Confirmed by building two otherwise identical
+  models: with the validator the pattern is absent, without it the pattern is
+  emitted. The withdrawal is deliberate on Pydantic's part and silent on ours.
+- **Solution:** `json_schema_extra={"pattern": WIRE_CURRENCY_PATTERN}` in
+  `schemas.py`, publishing `^[A-Za-z]{3}$` — the *wire* pattern. Republishing
+  `^[A-Z]{3}$` would have replaced one wrong schema with another, telling
+  clients `usd` is invalid when this API accepts it. Four tests in
+  `TestTheGeneratedSchemaPublishesWhatIsEnforced` now check the published
+  pattern against the service's actual answers in both directions.
+- **Lesson:** "The docs are generated from the types" is a property, not a
+  guarantee — it holds only while every constraint survives the trip into the
+  schema, and a validator can remove one without removing the behaviour. The
+  build's own thesis has an exception, and the exception is invisible from the
+  endpoint: correct status codes prove nothing about what was published. The
+  check that catches it is asserting the *schema*, not the response — which is
+  why the new tests read `/openapi.json` rather than only calling `/jobs`.
+
+## 2026-09-02 — The API reported version 0.7.0 for the whole of the v0.8.0 tag
+
+- **Problem:** after tagging `v0.8.0`, the service still announced `0.7.0` in
+  its startup log and in `/openapi.json`. A second occurrence: `PROGRESS.md`
+  records a version mismatch already caught once during README verification.
+- **Root cause:** the version existed twice — `pyproject.toml:3` and a
+  hard-coded `version="0.7.0"` in `create_app`. Two copies of one fact, with
+  nothing forcing agreement, so releasing meant remembering to edit both. The
+  ship sequence has no step that compares the running app's version to the tag.
+- **Solution:** `main.py` now reads `importlib.metadata.version("jobsapi")`,
+  leaving `pyproject.toml` as the single source, bumped to `0.8.1`. The literal
+  is gone rather than corrected, so the two cannot disagree again.
+- **Lesson:** a value that must be updated in two places during a release will
+  eventually be updated in one. The fix for a duplicated fact is deletion, not
+  diligence — correcting the copy would have left the same bug armed for the
+  next tag. Worth noting the tag itself is fine: `v0.8.0` permanently ships an
+  app reporting `0.7.0`, and that is history now, fixed forward rather than by
+  moving a published tag.
+
+---
+
 ## 2026-09-02 — The shipped README sent every stranger to four 404s
 
 - **Problem:** `README.md` linked the companion project `job-listing-scraper`

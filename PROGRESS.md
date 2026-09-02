@@ -5,8 +5,8 @@ Running status of the build. Updated by Claude as work lands.
 **Last updated:** 2026-09-02
 **Repo:** https://github.com/professor3333/job-listings-api (public)
 **Local path:** `~/code/job-listings-api`
-**Branch:** `main` — **Phases 1, 2, 3, 5, 6 shipped as v0.6.0**; **Phase 4 as v0.7.0**; **`/runs` duration as v0.8.0**
-**CI:** 🟢 green — 200 tests passing, lint and format clean, Docker image built
+**Branch:** `main` — **Phases 1, 2, 3, 5, 6 shipped as v0.6.0**; **Phase 4 as v0.7.0**; **`/runs` duration as v0.8.0**; **re-derivation fixes as v0.8.1**
+**CI:** 🟢 green — 214 tests passing, lint and format clean, Docker image built
 and smoke-tested on every push.
 **Releases:** [v0.6.0](https://github.com/professor3333/job-listings-api/releases/tag/v0.6.0)
 · [v0.7.0](https://github.com/professor3333/job-listings-api/releases/tag/v0.7.0)
@@ -158,6 +158,40 @@ edit — the reasoning that left `v0.6.0` alone does not extend to it.
 | lint / format | ✅ `ruff check` clean, `ruff format --check` clean on 35 files |
 | CI green | ✅ both jobs, `main` at `3468048` |
 | release / tag | ✅ v0.8.0, annotated tag + GitHub release |
+
+---
+
+## Re-derivation — `schemas.py`, run 2026-09-02
+
+The first entry from the syllabus below, run in teach-me mode: `Pagination` and
+`JobFilters` reasoned out from the contract before the file was opened. The
+derivation was correct on every mechanism — `extra="forbid"` on the base,
+`PydanticCustomError` for the cross-field code, `_upper` as transform-or-abstain
+— and produced **four defects that a green suite could not see**, because each
+is a disagreement *between* artefacts rather than a wrong answer from one.
+
+| # | Finding | Fixed in |
+|---|---------|----------|
+| 1 | `model_config` restated on `JobFilters`, re-creating the drift its parent's docstring records as fixed | `schemas.py` |
+| 2 | The `limit` cap was never tested at its boundary — any value 21–999 passed the whole suite | `tests/test_hardening.py` |
+| 3 | `BeforeValidator` withdraws `pattern` from `/openapi.json`; `currency` was enforced but unpublished | `schemas.py`, `docs/api.md` |
+| 4 | The version existed in two files; the app reported `0.7.0` for the whole of the `v0.8.0` tag | `main.py`, `pyproject.toml` |
+
+Findings 3 and 4 have `DEBUGGING.md` entries and full learning-log write-ups.
+Finding 3 is the substantive one: it is this build's own thesis — *the docs are
+generated from the types* — holding everywhere except where a validator quietly
+opts a constraint out.
+
+Two method notes worth keeping:
+
+- **A probe needs a case it must succeed at.** The experiment checking whether a
+  `yield` dependency runs on a 422 first reported a clean `events=[]`, which was
+  a true observation of the wrong experiment — an un-annotated `request`
+  parameter had turned into a required query parameter. A control that was
+  supposed to pass, and didn't, is what exposed it.
+- **One test in the new boundary class hard-codes `100`** rather than importing
+  `LIMIT_MAX`. A suite that imports the constant everywhere can only prove the
+  code agrees with itself; it cannot notice the cap being changed to 250.
 
 ---
 

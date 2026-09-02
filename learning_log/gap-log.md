@@ -737,3 +737,70 @@ tag nobody can check out.
 For a release that a stranger might read months later, the message on the tag is
 the only explanation that travels with a `git clone`. GitHub release notes live
 on the website; the annotation lives in the repository.
+
+### Re-derivation session — `schemas.py`, the query-parameter half — 2026-09-02
+
+The first unaided re-derivation from the syllabus in `PROGRESS.md`, run in
+teach-me mode: questions only, no implementation shown until each answer was
+committed to. `Pagination` and `JobFilters` were reasoned out from the contract
+rather than read. Four defects surfaced from the reasoning, none of which any
+test was failing on — recorded here because *how* they surfaced is the
+transferable part.
+
+**Q1. Three of the four findings were invisible to a green test suite. What do
+they have in common?**
+
+Each is a disagreement between two artefacts that no single artefact can see.
+The redundant `model_config` disagrees with the docstring above it. The absent
+boundary test disagrees with `docs/api.md`'s published cap. The withdrawn
+`pattern` disagrees with the enforced constraint. The hard-coded version
+disagrees with the tag.
+
+A test asserts one behaviour at one point. None of these is a wrong behaviour —
+every endpoint answered correctly throughout — so there is no request that
+returns the wrong status code, and no traceback to read. They are wrong
+*relations* between things, and the only way to find one is to hold both sides
+up at once. Re-derivation does that structurally: predicting what the code must
+be and then comparing puts two versions of the same claim side by side, which
+is exactly the comparison a test never makes.
+
+**Q2. The probe written to check whether a `yield` dependency is entered on a
+422 printed `events=[]`, which looked like a clean answer. It was wrong. Why,
+and what saved it?**
+
+The override function's `request` parameter had no annotation. FastAPI
+re-analyses an override's signature exactly like any dependency, so an
+un-annotated parameter is not "the request" — it is a required *query
+parameter* named `request`. Every request 422'd on the missing parameter before
+reaching the endpoint, so the connection genuinely was never opened, and the
+empty list was a true observation of the wrong experiment.
+
+What saved it was a control that was supposed to pass: `?limit=1` returned 422
+as well, which is impossible if the app is working. Without that case the
+conclusion — "FastAPI skips dependencies when validation fails" — would have
+been recorded as a verified fact, complete with evidence.
+
+The general form: **an empty result is not evidence of absence until something
+has proved the measurement can produce a non-empty one.** A probe needs a case
+it must succeed at, or it is only testing itself.
+
+**Q3. `?currency=usd` works, `?currency=dollars` is refused, and the schema
+published neither rule. Why did the description survive when the pattern did
+not?**
+
+Because Pydantic distinguishes what it can still guarantee from what it cannot.
+`pattern` is a machine-checkable claim about the input, and a `BeforeValidator`
+may transform the input, so the claim is no longer true of what arrives on the
+wire — Pydantic withdraws it rather than publish something false. `description`
+is prose: it asserts nothing checkable, so a transform cannot falsify it and it
+passes through untouched.
+
+The consequence is that the surviving half is the half no client can enforce. A
+human reading `/docs` sees "Case-insensitive; matched uppercase" and complies; a
+generated client sees `{"type": "string"}` and permits anything. The
+documentation degrades from a contract into advice, and it does so silently,
+at exactly the point where the type system stopped being able to speak.
+
+That is the sharpest available answer to the viva question *"what does it mean
+when the docs are wrong?"* — here they were not wrong, they were **incomplete**,
+which is worse, because incompleteness is not visible from the document itself.
