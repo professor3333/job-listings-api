@@ -365,7 +365,10 @@ transactions never writes `finished_at`. That is reported as-is. This service
 cannot distinguish a live run from an abandoned one by querying, because the
 discriminator is a `-journal` file on disk, not a row.
 
-A source with jobs but no run row still appears, with null run fields.
+A source with jobs but no run row still appears, with null run fields. The
+converse does **not** hold and the asymmetry is deliberate: a source with run
+rows and no jobs does not appear at all. This endpoint answers "what is in the
+dataset", and a scrape that yielded nothing is visible on `/runs` instead.
 
 ---
 
@@ -477,6 +480,11 @@ whichever page is unlucky. Cost is one covering-index search on `idx_jobs_posted
 Widening the field to `datetime` was the alternative and was declined: it would
 change `/openapi.json` from `format: date` to `format: date-time` for every
 client, to accommodate data that does not exist.
+
+The gate covers three endpoints, not one. `posted_at` is served by `/jobs` and
+`/jobs/{job_id}`, and `/stats` reports `MIN(posted_at)` and `MAX(posted_at)` as
+dates — so the same drift would fail the dataset-shape endpoint too, where a
+client has no page to skip past.
 
 ---
 

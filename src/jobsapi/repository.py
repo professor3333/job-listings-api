@@ -394,10 +394,25 @@ def runs_page(
 def list_sources(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """Every source that has jobs, with the outcome of its most recent run.
 
-    A LEFT JOIN because a source may have jobs but no run row, or a run row and
-    no jobs — neither should make the source vanish from this list. The
-    correlated subquery picks the latest run per source by id, which is
-    monotonic here where `started_at` ties within a batch.
+    A LEFT JOIN because a source may have jobs but no run row, and that must not
+    make it vanish: it appears with null run fields.
+
+    The converse is **not** true and the asymmetry is the contract, not an
+    oversight. `FROM jobs` is the driving table, so a source with run rows and no
+    jobs produces nothing to group and does not appear at all. That is what
+    `docs/api.md` means by "one entry per source that has jobs" — this endpoint
+    answers "what is in the dataset", and a source that has never yielded a row
+    is not in it. `/runs` is where a scrape with no results is visible.
+
+    The correlated subquery picks the latest run per source by id, which is
+    monotonic here where `started_at` ties within a batch — Build 2 stamps a
+    batch of runs from one clock reading, the same habit that produced the
+    zero-duration era, so `MAX(started_at)` would tie where `MAX(id)` does not.
+
+    The subquery is also what keeps `job_count` right. Joining `jobs` to `runs`
+    on `source` would fan out — one row per (job, run) pair — and `COUNT(*)`
+    would then report jobs times runs. Matching exactly one run row per source
+    is what makes the count a count of jobs.
     """
     return conn.execute(
         """

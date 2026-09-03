@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from jobsapi.schemas import CHANGE_VALUE_MAX_LENGTH
@@ -43,6 +44,24 @@ class TestSources:
         by_source = {s["source"]: s for s in client.get("/sources").json()}
         assert by_source["greenhouse:figma"]["job_count"] == 1
         assert by_source["greenhouse:figma"]["last_run_id"] is None
+
+    def test_a_source_with_runs_but_no_jobs_does_not_appear(
+        self, runs_only_source_client: TestClient
+    ) -> None:
+        """The converse of the test above, and it goes the other way.
+
+        `FROM jobs` is the driving table, so a LEFT JOIN preserves a source with
+        jobs and no runs — not a source with runs and no jobs, which has nothing
+        to group and vanishes. That asymmetry is the contract (`docs/api.md`:
+        "one entry per source that has jobs"), and it is pinned here because the
+        SQL reads as though the join were symmetric.
+        """
+        sources = {s["source"] for s in runs_only_source_client.get("/sources").json()}
+        assert "lever:ghost" not in sources
+        assert sources, "the sources that do have jobs are unaffected"
+
+    def test_is_empty_on_an_empty_database(self, empty_client: TestClient) -> None:
+        assert empty_client.get("/sources").json() == []
 
     def test_is_a_bare_array_not_an_envelope(self, client: TestClient) -> None:
         """Deliberate inconsistency with /jobs: nothing here needs paging."""
@@ -141,6 +160,94 @@ class TestStats:
         body = client.get("/stats").json()
         assert body["earliest_posted_at"] == "2026-08-27"
         assert body["latest_posted_at"] == "2026-08-30"
+
+
+class TestStatsAddsUp:
+    """The invariants inside one `/stats` body.
+
+    `stats()` worries in its docstring about counts taken from four different
+    states of the database, and takes a snapshot to prevent it — but nothing
+    checked that the numbers agree *within* one response. These are the
+    relationships a client would assume without being told, and the ones a
+    future edit to one of the six queries would silently break.
+    """
+
+    def test_every_coverage_field_accounts_for_every_row(
+        self, client: TestClient
+    ) -> None:
+        body = client.get("/stats").json()
+        for field in body["coverage"]:
+            assert field["present"] + field["missing"] == body["total_jobs"], field
+
+    def test_the_coverage_ratio_matches_its_own_counts(
+        self, client: TestClient
+    ) -> None:
+        body = client.get("/stats").json()
+        for field in body["coverage"]:
+            expected = field["present"] / body["total_jobs"]
+            assert field["coverage"] == pytest.approx(expected), field
+
+    def test_the_remote_split_and_remote_coverage_are_the_same_fact(
+        self, client: TestClient
+    ) -> None:
+        """`remote` is reported twice, by two different queries.
+
+        Its coverage row comes from the SUM-per-field scan; the tri-state split
+        comes from a separate SELECT. "Missing" and "unknown" are the same rows
+        counted two ways, so they must agree — and if they ever stop agreeing,
+        one of the two queries changed and the other did not.
+        """
+        body = client.get("/stats").json()
+        coverage = {c["field"]: c for c in body["coverage"]}
+        assert coverage["remote"]["missing"] == body["remote_unknown"]
+        assert (
+            coverage["remote"]["present"] == body["remote_true"] + body["remote_false"]
+        )
+
+
+class TestStatsOnAnEmptyDatabase:
+    """Coverage divides by `COUNT(*)`. The guard existed; nothing exercised it."""
+
+    def test_does_not_divide_by_zero(self, empty_client: TestClient) -> None:
+        response = empty_client.get("/stats")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["total_jobs"] == 0
+        assert all(field["coverage"] == 0.0 for field in body["coverage"])
+        assert all(
+            field["present"] == field["missing"] == 0 for field in body["coverage"]
+        )
+
+    def test_reports_null_dates_rather_than_inventing_a_range(
+        self, empty_client: TestClient
+    ) -> None:
+        """`MIN`/`MAX` over no rows is NULL, and null is the honest answer."""
+        body = empty_client.get("/stats").json()
+        assert body["earliest_posted_at"] is None
+        assert body["latest_posted_at"] is None
+
+    def test_the_tri_state_split_is_zero_not_null(
+        self, empty_client: TestClient
+    ) -> None:
+        """`SUM` over no rows is NULL, not 0 — which is why the code coalesces.
+
+        Without the `or 0`, an empty table would fail the response model on a
+        non-nullable int rather than reporting three zeroes.
+        """
+        body = empty_client.get("/stats").json()
+        assert (
+            body["remote_true"] == body["remote_false"] == body["remote_unknown"] == 0
+        )
+
+    def test_an_empty_jobs_page_is_still_a_well_formed_envelope(
+        self, empty_client: TestClient
+    ) -> None:
+        assert empty_client.get("/jobs").json() == {
+            "items": [],
+            "total": 0,
+            "limit": 20,
+            "offset": 0,
+        }
 
 
 class TestJobChanges:
