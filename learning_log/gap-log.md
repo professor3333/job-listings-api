@@ -1171,3 +1171,66 @@ The empty database is the same gap from the other end: `coverage` divides by
 `COUNT(*)`, and `SUM` over no rows is NULL rather than 0. Both guards existed —
 `if total else 0.0`, and `or 0` — and neither was exercised by any test, so the
 code was right by intention rather than by evidence.
+
+---
+
+## 2026-09-03 — explain-back: tracking `CLAUDE.md`
+
+No code changed here, so the questions are about the mechanism that hid the
+file rather than about a construct.
+
+**Q1. `.gitignore` and `.git/info/exclude` both cause `git status` to stay
+quiet. What is the difference, and which one caused the file to go missing for
+everyone else?**
+
+`.gitignore` is a tracked file, so its rules are part of the repository and
+every clone gets them. `.git/info/exclude` lives inside `.git/`, which is never
+committed — nothing in `.git/info/` can be pushed, fetched, or cloned. Its
+rules are therefore per-clone and invisible to everybody else.
+
+`CLAUDE.md` was excluded through the second one, and that is precisely why the
+symptom was confusing rather than obvious. On the authoring machine the file
+exists, opens, and is quietly ignored, so the repository *looks* complete. On
+any other clone the file was never sent, so it does not exist at all. There is
+no error on either side, and the two views disagree without either of them
+reporting anything — which is the same failure shape as PR #13, where the
+README's links resolved fine from an account that could see the private repo.
+
+The general rule: `.gitignore` for anything every clone should ignore (build
+output, `.venv`), `.git/info/exclude` only for something local to *this*
+working copy that no collaborator should be told about.
+
+**Q2. Removing the exclude entry did not add the file. Why not, and would
+leaving the entry in place have blocked the `git add`?**
+
+Because an ignore rule and the index are separate mechanisms. Ignore rules only
+decide whether an **untracked** path is reported by `git status` and picked up
+by a wildcard `git add`; they never move anything into the index by themselves.
+Removing the line made the path visible, and `git add CLAUDE.md` is what
+actually staged it.
+
+And no, the entry would not have blocked it: `git add` on an explicitly named
+path ignores the ignore rules — it is only wildcards that skip ignored files,
+and even then `-f` overrides. More to the point, ignore rules stop applying
+entirely once a path is tracked, so leaving the line in would have been inert
+*and* misleading: a future reader would read `CLAUDE.md` in the exclude file and
+conclude the file is untracked, which is exactly the wrong conclusion. The entry
+was removed because a rule with no effect still carries a claim.
+
+**Q3. Why check for private URLs before tracking a file that had been on disk
+for three days?**
+
+Because the repository is public and the file was written under the assumption
+that nobody else would read it. Its exclude comment said "never published", and
+prose written for an audience of one records things — internal paths, private
+repo links, working credentials — that prose written for strangers does not.
+Publishing is the moment those assumptions become wrong, and it is one-way: a
+pushed commit is in the history whether or not a later commit removes it.
+
+This project has already paid for skipping that check once. PR #13 fixed three
+README links pointing at the private `job-listing-scraper`, shipped in `v0.6.0`
+and missed by two full ship sequences, because a link is only tested by
+following it from an account that cannot see the target. The scan here was
+clean — no links at all, no credentials, and the `~/code/...` paths are
+tilde-relative rather than absolute — but the cost of running it was one grep
+against a known-expensive class of mistake.
