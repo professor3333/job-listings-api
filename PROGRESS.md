@@ -2,16 +2,17 @@
 
 Running status of the build. Updated by Claude as work lands.
 
-**Last updated:** 2026-09-02
+**Last updated:** 2026-09-03
 **Repo:** https://github.com/professor3333/job-listings-api (public)
 **Local path:** `~/code/job-listings-api`
-**Branch:** `main` — **Phases 1, 2, 3, 5, 6 shipped as v0.6.0**; **Phase 4 as v0.7.0**; **`/runs` duration as v0.8.0**; **re-derivation fixes as v0.8.1**
-**CI:** 🟢 green — 214 tests passing, lint and format clean, Docker image built
+**Branch:** `main` — **Phases 1, 2, 3, 5, 6 shipped as v0.6.0**; **Phase 4 as v0.7.0**; **`/runs` duration as v0.8.0**; **re-derivation fixes as v0.8.1**; **read consistency and the empty-filter contract as v0.9.0**
+**CI:** 🟢 green — 237 tests passing, lint and format clean, Docker image built
 and smoke-tested on every push.
 **Releases:** [v0.6.0](https://github.com/professor3333/job-listings-api/releases/tag/v0.6.0)
 · [v0.7.0](https://github.com/professor3333/job-listings-api/releases/tag/v0.7.0)
 · [v0.8.0](https://github.com/professor3333/job-listings-api/releases/tag/v0.8.0)
 · [v0.8.1](https://github.com/professor3333/job-listings-api/releases/tag/v0.8.1)
+· [v0.9.0](https://github.com/professor3333/job-listings-api/releases/tag/v0.9.0)
 
 Build 3 of Stage 0. A FastAPI service over the dataset Build 2 collected,
 exposed as a REST API with real input validation. The exit criterion was **"the
@@ -384,6 +385,39 @@ All eleven met.
   commit and the reference looks sound from the machine that wrote it.
   `git merge-base --is-ancestor` is the check that matters, and it says
   unreachable from `main`.
+
+---
+
+## Ship sequence — v0.9.0, run 2026-09-03
+
+The first release carrying a **breaking** change: `?q=` and `?company=` moved
+from `200` to `422`. Also the first run where the version bump was cut as its
+own commit *before* the tag rather than assumed — the direct lesson of `v0.8.0`.
+
+| Step | Result |
+|------|--------|
+| tests | ✅ 237 passed (23 new since v0.8.1) |
+| tests with `jobs.db` absent | ✅ 237 passed, `JOBSAPI_DB_PATH` pointed at a path that does not exist |
+| home directory untouched by the suite | ✅ `~/.local/share/jobsapi/app.db` mtime and size identical either side of a full run |
+| lint / format | ✅ `ruff check` clean, `ruff format --check` clean on 36 files |
+| clean clone test | ✅ fresh clone → `uv sync` → 237 passed → demo DB → server; no `data/` in the clone |
+| README verification — read path | ✅ all 10 documented `curl`s run against the live server |
+| README verification — write path | ✅ 201+`Location`, 409, 201, the PATCH/PUT pair, 204 — `description` surviving a PATCH and cleared by a PUT, observed rather than assumed |
+| `docker build` | ✅ `linux/arm64`, 58.7 MB |
+| container checks | ✅ `id -u` 1001 · write to `/data/jobs.db` refused · healthcheck `healthy` · `docker stop` 1s exit 0 · JSON logs on stdout |
+| new behaviour, live | ✅ `?q=` and `?company=` → 422; `?q=%20` and `?q=engineer` → 200 — in the container as well as the local server |
+| **version check — running server** | ✅ `/openapi.json` `info.version` = `0.9.0`, startup log = `0.9.0`, **and the same two inside the container** |
+| CI green on the merge commit | ✅ both jobs |
+| release / tag | ✅ v0.9.0, annotated, on the **merge commit** |
+
+**One defect found, and it was in the verification rather than the software.**
+The first pass of the write-path `curl`s sent `{"notes": ...}` where the model
+declares `description`, and got a `422`. The API was right — `extra="forbid"` on
+a body model rejecting an unknown field is Phase 4 working exactly as designed —
+and the README was right; the transcription was wrong. Recorded because "verify
+every documented command" means running *the documented command*, and a
+paraphrase of it tests something else. The corrected run used the README's bodies
+verbatim.
 
 ---
 
