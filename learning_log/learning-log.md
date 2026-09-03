@@ -272,6 +272,40 @@ The viva follows the entries, in Part 2.
   it returns rows. Recurred three times in this build — jobs, changes, runs —
   which is why it is written up rather than left in the gap log.
 
+## 2026-09-03 — A number recorded without its command is not a measurement
+
+- **What broke:** A container image measured `266 MB` on 2026-09-02 and `58.7 MB`
+  on 2026-09-03 — an apparent 4.5× improvement, from a build recipe that had not
+  changed. Nearly written up as a real result.
+- **Why it happens:** `docker images` SIZE, `docker image inspect .Size`, `docker
+  system df`, `docker history`'s total and a registry's compressed figure are
+  five different quantities for one image, and they differ by far more than any
+  change worth reporting. This machine had since moved to the **containerd image
+  store**, which reports compressed sizes — so the two figures were never
+  comparable. The record said `266 MB` and not which command produced it, so the
+  comparison could not be checked from the record alone.
+- **What it teaches:** Three things.
+  1. **Establish which quantity before investigating the cause.** The instinct is
+     to reach for `git log -- Dockerfile` and hunt the change. That is answering
+     "what changed" before "did anything change", and it will happily produce a
+     plausible culprit for a difference that is not real.
+  2. **Prefer a probe that needs no history.** The decisive test needed neither
+     the old command nor the old machine: build the image, ask it its size, then
+     measure the filesystem inside it. `.Size` = 58.7 MB against `du -sx /` =
+     196 MB proves the reported figure is not a filesystem size, on its own, today.
+     A hypothesis that depends on recovering a lost configuration is weaker than
+     one that can be tested locally.
+  3. **A number is a measurement only with its instrument.** The defect was in the
+     record, not the image: the toolchain changed underneath a figure that had no
+     way to say what it was, and nothing signalled the change.
+- **Where it was applied:** `PROGRESS.md` — both figures now carry their command
+  and a note that they are different quantities; the unqualified `266 MB` came out
+  of `README.md`.
+- **How to detect it next time:** Before comparing two numbers taken on different
+  days, ask what produced each. If either answer is missing, the comparison is not
+  available yet — and a suspiciously large improvement in a system nobody
+  optimised is a measurement question first.
+
 ## 2026-09-03 — A principle already written down does not enforce itself on the cases it governs
 
 - **What broke:** `?q=` and `?company=` returned `200` with the unfiltered list.
