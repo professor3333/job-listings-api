@@ -1245,3 +1245,75 @@ following it from an account that cannot see the target. The scan here was
 clean — no links at all, no credentials, and the `~/code/...` paths are
 tilde-relative rather than absolute — but the cost of running it was one grep
 against a known-expensive class of mistake.
+
+---
+
+## 2026-09-03 — explain-back: untracking, and purging from history
+
+Covers PRs #32 and #33. Still no code — the questions are about Git's object
+model, which is what the day actually exercised.
+
+**Q1. `git rm --cached CLAUDE.md` is documented as removing a file from the
+index while leaving it on disk. The file was deleted from disk anyway. Where
+did the guarantee stop applying?**
+
+It never applied outside the branch it ran on. `--cached` removes the path from
+the index of the commit being built, so the *branch* records a deletion while
+the working tree keeps the file — true, and it held: after the commit the file
+was still there, 32,782 bytes.
+
+The loss happened at `git switch main && git pull`. On `main` the path was
+still **tracked**, because the untracking commit lived only on the feature
+branch. Pulling the merge brought in a commit that deletes a tracked path, and
+deleting a tracked path is a working-tree operation — Git removes the file,
+which is exactly what it should do. Nothing malfunctioned. The mental model was
+just one branch too narrow: `--cached` protects the copy in the tree where it
+runs, not a copy on some other branch that has not seen the deletion yet.
+
+The general shape: a working-tree file is safe from a *staging* command and not
+from a *checkout*. `git rm --cached` is the first; every branch switch, pull,
+reset and merge is the second.
+
+**Q2. `filter-repo --invert-paths --path CLAUDE.md` rewrote 71 commits when 2
+contained the file, and the trees either side were byte-identical. What changed,
+and why does one commit's change reach commits that predate the file?**
+
+The signature. GitHub signs the merge commits it creates, and a commit object
+contains a `gpgsig` header alongside its tree, parents, author and message.
+`filter-repo` strips signatures unconditionally — it must, because a signature
+is computed over the commit's bytes and a rewritten commit has different bytes,
+so the only alternative to dropping it is keeping one that no longer verifies.
+
+Dropping a header changes the object, and a commit's SHA is the hash of its
+full contents. So a signed commit gets a new SHA even when its tree is
+untouched. And a commit names its parents *by SHA*, so the moment one ancestor's
+id changes, every descendant's contents change too, and the rewrite walks
+forward through the whole graph. The earliest signed commit therefore sets the
+blast radius — which here was a merge from days before the file existed.
+
+Trees are shared and content-addressed, which is why `ceddeae…` was identical
+on both sides: the *contents* of that commit's snapshot never changed. Only the
+envelope did. The lesson is that "which commits contain the file" is the wrong
+question; "which commits' bytes change, plus everything downstream" is the right
+one.
+
+**Q3. The purge succeeded and the file is still downloadable from GitHub. Is
+that a failed rewrite?**
+
+No — it is the difference between a repository and a host. The rewrite did what
+it claims: no ref in the repository reaches a tree containing the file, which
+`git rev-list --all --objects | grep` confirms. Git never *deletes* on a
+force-push; it repoints a ref and leaves the orphaned objects for garbage
+collection.
+
+GitHub then declines to collect them. It keeps unreachable objects served by
+SHA, and `refs/pull/31/head` is a real ref that keeps the old commits reachable
+on its side no matter what `main` looks like — which is why the pull request
+still renders the full diff. Verified rather than assumed: the API returned all
+32,782 bytes from both `af3bd18` and the pull ref after the push.
+
+So a purge is two operations against two systems, and only the first is Git's.
+The second is a request to the host. The practical consequence is that a rewrite
+is not a remediation for a leaked credential — rotating it is — because the
+window between push and purge is unbounded and the object stays fetchable
+throughout.
