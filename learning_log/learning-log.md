@@ -272,6 +272,68 @@ The viva follows the entries, in Part 2.
   it returns rows. Recurred three times in this build — jobs, changes, runs —
   which is why it is written up rather than left in the gap log.
 
+## 2026-09-03 — Read-only is where isolation has to be asked for, because nothing else asks
+
+- **What broke:** *Designed out, not observed.* Every paginated endpoint computed
+  `total` and `items` in separate read transactions, so a scraper commit landing
+  between them produced a response whose two halves described different states of
+  the database. `/stats` was worse: six independent reads in one body.
+- **Why it happens:** Python's `sqlite3` opens an implicit transaction before DML
+  only, so `SELECT`s run in autocommit — one `SHARED` lock per statement, taken
+  and released. Nothing about a read-only connection supplies isolation; `mode=ro`
+  constrains *what* you may do, not *what you see while you do it*. The natural
+  reading — "no writes, so no transactions to worry about" — is inverted.
+- **What it teaches:** Three things worth separating.
+  1. **A transaction boundary is part of what a query means.** Two reads combined
+     into one answer are one question, and one question deserves one snapshot.
+  2. **The available isolation is constrained by earlier decisions.** `BEGIN
+     IMMEDIATE` is unavailable here (`mode=ro` + `query_only`), so the snapshot
+     must be deferred; and because Decision 1 declined WAL to keep the container's
+     bind mount read-only, a consistent read necessarily blocks the writer. WAL is
+     the mode where that would be free. The cost of a Phase 0 decision arrived two
+     phases later, in a different file.
+  3. **Choosing between failure modes is the actual work.** The skew is silent;
+     the contention is a `503` with `Retry-After` that was already built, already
+     classified by `sqlite_errorname` and already tested. Decision 2 says loud and
+     documented beats quiet and plausible, so the trade was already settled in
+     principle — the only new work was noticing it applied here.
+- **Where it was applied:** `read_snapshot` in `src/jobsapi/db.py`; used by
+  `jobs_page`, `runs_page`, `job_changes_page` and `stats` in
+  `src/jobsapi/repository.py`. Reasoned in `docs/design.md` as an addendum to
+  Decision 1. The application database is deliberately excluded — this process is
+  its only writer and it is WAL, so the motivating mechanism does not exist there.
+- **How to detect it next time:** Count the statements a single response depends
+  on. If it is more than one and they must agree, they need a snapshot. And note
+  the reason a green suite proves nothing here: `conftest.py` builds a database
+  with no concurrent writer, so the failing case is unreachable in tests by
+  construction. The test that *can* be written asserts the mechanism — that the
+  second read sees `conn.in_transaction` — not the symptom.
+
+## 2026-09-03 — An indirection is only worth its cost if something enforces the property it buys
+
+- **What broke:** *Latent.* `_SORT_COLUMNS` maps every `SortField` member to a
+  column, and `_build_order` subscripts it. Nothing asserted the map was total, and
+  only two of its six members were ever exercised by a test. A seventh enum member
+  added without a mapping would pass validation, raise `KeyError` inside the
+  repository, and surface as a `500` — the one outcome the hardening table forbids.
+- **Why it happens:** The map exists to decouple two namespaces this project does
+  not own equally: the public sort names are Build 3's, the columns are Build 2's.
+  That is a real benefit, but it is an *option* on a future change, and it is paid
+  for now with a second place to edit. An unenforced invariant across two places
+  is the standard shape of a latent defect.
+- **What it teaches:** When you accept an indirection for a property, make the
+  property testable and test it. Here the enum is iterable, so completeness is one
+  assertion — `set(_SORT_COLUMNS) == set(SortField)` — and a member added without a
+  mapping fails in the suite rather than on a live request. Note also what the map
+  is *not*: it is not a second lock. The enum already rejected `id;DROP TABLE jobs`
+  before the repository was entered, so safety is fully discharged upstream.
+- **Where it was applied:** `TestSortAllowlistIsComplete` in
+  `tests/test_snapshot.py`, which also parametrises an end-to-end request over
+  every member so all six are exercised rather than two.
+- **How to detect it next time:** For any lookup keyed by an enum, ask what happens
+  to a member with no entry. If the answer is `KeyError` at runtime, the
+  completeness assertion is missing.
+
 ## 2026-09-01 — A read-only connection cannot recover a hot journal, so "locked" is two different failures
 
 - **What broke:** *Designed out.* The naive handler — catch `sqlite3.OperationalError`,

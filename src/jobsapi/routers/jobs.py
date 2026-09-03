@@ -9,7 +9,6 @@ from fastapi import APIRouter, Depends, Path, Query
 
 from jobsapi import repository
 from jobsapi.db import get_conn
-from jobsapi.errors import JobNotFound
 from jobsapi.schemas import (
     CHANGE_VALUE_MAX_LENGTH,
     JobChangePage,
@@ -49,9 +48,10 @@ def list_jobs(
     `JobFilters`, and the SQL lives in the repository. A route that grows logic
     is a route that has started doing someone else's job.
     """
+    rows, total = repository.jobs_page(conn, filters)
     return JobPage(
-        items=[dict(row) for row in repository.list_jobs(conn, filters)],
-        total=repository.count_jobs(conn, filters),
+        items=[dict(row) for row in rows],
+        total=total,
         limit=filters.limit,
         offset=filters.offset,
     )
@@ -105,10 +105,7 @@ def list_job_changes(
     fact from "this job does not exist". Collapsing the two would make the
     endpoint unable to answer either question.
     """
-    if not repository.job_exists(conn, job_id):
-        raise JobNotFound(job_id)
-
-    rows = repository.list_job_changes(
+    rows, total = repository.job_changes_page(
         conn, job_id, limit=pagination.limit, offset=pagination.offset
     )
     items = []
@@ -123,7 +120,7 @@ def list_job_changes(
 
     return JobChangePage(
         items=items,
-        total=repository.count_job_changes(conn, job_id),
+        total=total,
         limit=pagination.limit,
         offset=pagination.offset,
     )

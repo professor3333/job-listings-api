@@ -372,6 +372,48 @@ All eleven met.
 
 ---
 
+## Re-derivation — `repository.py`, run 2026-09-03
+
+The second syllabus entry, again in teach-me mode: the two-query envelope, the
+WHERE builder and the `ORDER BY` allowlist reasoned out from `docs/api.md` and
+`docs/design.md` before the file was opened. The derivation was correct on every
+mechanism the file implements — accumulate-don't-enumerate, the conditional
+`WHERE` keyword, the lockstep invariant between clause text and parameter order,
+the parenthesised `q` clause, NULL semantics left to three-valued logic — and
+produced **five findings**, four of them fixed here.
+
+| # | Finding | Status |
+|---|---------|--------|
+| 1 | `total` and `items` read in separate transactions; a scraper commit between them makes them disagree, silently in the dangerous direction. Also `/runs`, `/jobs/{id}/changes`, and `/stats` with six reads | Fixed — `read_snapshot` |
+| 2 | The skew *direction* depended on left-to-right keyword evaluation in one constructor call | Fixed — named locals, explicit order |
+| 3 | Nothing asserted `_SORT_COLUMNS` was total; a future `SortField` member would be a `KeyError` → 500 | Fixed — completeness test |
+| 4 | `?q=` and `?company=` validate, then are silently dropped by a truthiness test | Deferred to its own PR — it is a contract change |
+| 5 | `cache_size_kib` unbounded | Fixed — `ge=-1_048_576, le=-1` |
+
+**Finding 1 is the substantive one**, and it is the first finding in this build
+whose fix has a *cost* rather than being strictly better. Taking the transaction
+means this service can delay Build 2's commit for the span of two queries. It
+was taken anyway, on the asymmetry: the skew is silent and the contention is a
+`503` that was already built, documented and tested. Reasoned in `docs/design.md`
+as an addendum to Decision 1 — the second entry in the same locking ledger where
+WAL was declined, and the entry that pays that decision's bill.
+
+**The method note from this run.** The defect is *unreachable in the test
+suite by construction* — `conftest.py` builds a database with no concurrent
+writer, so no assertion on a response body could ever have found it. What is
+testable is the mechanism rather than the symptom: that the second read sees
+`conn.in_transaction`, that the transaction is released on both the normal and
+the raising path, and that `BEGIN IMMEDIATE` really is refused on this
+connection, which makes "deferred" documented as forced rather than preferred.
+
+Two correct decisions with no recorded reasoning were also written down, in
+`_build_order`'s docstring, on the grounds that unexplained correctness is what
+gets "simplified": the tie-break's matching *direction* buys the keyset-pagination
+option, and under `sort=salary_min` ~70% of rows tie on NULL, so the tie-break is
+the ordering for most of the result set rather than a rare disambiguation.
+
+---
+
 ## Re-derivation syllabus
 
 Every file in this build was written by Claude and explained inline, with the
@@ -397,8 +439,8 @@ partially — ◧ means part of the file was re-derived and the rest was not.
 | `src/jobsapi/problems.py` | 2026-09-01 | ⬜ |
 | `src/jobsapi/schemas.py` | 2026-09-01 | ◧ 2026-09-02 — `Pagination` only; the response models were not |
 | `src/jobsapi/schemas.py` (Phase 3) | 2026-09-01 | ✅ 2026-09-02 |
-| `src/jobsapi/repository.py` | 2026-09-01 | ⬜ |
-| `src/jobsapi/repository.py` (Phase 3) | 2026-09-01 | ⬜ |
+| `src/jobsapi/repository.py` | 2026-09-01 | ◧ 2026-09-03 — the two-query envelope; `get_job`'s domain-error contract was not |
+| `src/jobsapi/repository.py` (Phase 3) | 2026-09-01 | ✅ 2026-09-03 |
 | `src/jobsapi/repository.py` (Phase 5) | 2026-09-01 | ⬜ |
 | `src/jobsapi/logging_config.py` | 2026-09-01 | ⬜ |
 | `src/jobsapi/routers/jobs.py` | 2026-09-01 | ⬜ |

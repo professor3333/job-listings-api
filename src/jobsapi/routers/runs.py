@@ -31,14 +31,12 @@ def list_runs(
     conn: Annotated[sqlite3.Connection, Depends(get_conn)],
 ) -> RunPage:
     """Plain `def` — blocking sqlite3, same rule as every other query endpoint."""
+    rows, total = repository.runs_page(
+        conn, limit=pagination.limit, offset=pagination.offset
+    )
     return RunPage(
-        items=[
-            dict(row)
-            for row in repository.list_runs(
-                conn, limit=pagination.limit, offset=pagination.offset
-            )
-        ],
-        total=repository.count_runs(conn),
+        items=[dict(row) for row in rows],
+        total=total,
         limit=pagination.limit,
         offset=pagination.offset,
     )

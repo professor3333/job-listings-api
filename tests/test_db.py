@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from jobsapi import repository
 from jobsapi.config import Settings
@@ -116,3 +117,28 @@ class TestRepositoryBoundary:
             assert caught.value.job_id == 999_999
         finally:
             conn.close()
+
+
+class TestCacheSizeBound:
+    """Safety and sensibility are separate obligations.
+
+    Every Python int is grammatically safe to format into a PRAGMA — that is
+    what makes the interpolation total. It says nothing about whether the value
+    is operationally meaningful, which is a bound's job.
+    """
+
+    def test_a_positive_value_is_refused(self) -> None:
+        """Positive means *pages* to SQLite, which contradicts the `_kib` name."""
+        with pytest.raises(ValidationError):
+            Settings(cache_size_kib=8_000)
+
+    def test_zero_is_refused(self) -> None:
+        with pytest.raises(ValidationError):
+            Settings(cache_size_kib=0)
+
+    def test_an_absurd_cache_is_refused(self) -> None:
+        with pytest.raises(ValidationError):
+            Settings(cache_size_kib=-99_999_999)
+
+    def test_the_default_is_legal(self) -> None:
+        assert Settings().cache_size_kib == -8_000
