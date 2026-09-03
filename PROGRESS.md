@@ -6,7 +6,7 @@ Running status of the build. Updated by Claude as work lands.
 **Repo:** https://github.com/professor3333/job-listings-api (public)
 **Local path:** `~/code/job-listings-api`
 **Branch:** `main` — **Phases 1, 2, 3, 5, 6 shipped as v0.6.0**; **Phase 4 as v0.7.0**; **`/runs` duration as v0.8.0**; **re-derivation fixes as v0.8.1**; **read consistency and the empty-filter contract as v0.9.0**
-**CI:** 🟢 green — 248 tests passing, lint and format clean, Docker image built
+**CI:** 🟢 green — 252 tests passing, lint and format clean, Docker image built
 and smoke-tested on every push.
 **Releases:** [v0.6.0](https://github.com/professor3333/job-listings-api/releases/tag/v0.6.0)
 · [v0.7.0](https://github.com/professor3333/job-listings-api/releases/tag/v0.7.0)
@@ -554,6 +554,58 @@ other is how a list endpoint ends up reading 21.7 MB it will discard.
 
 ---
 
+## Re-derivation — `schemas.py` response models, run 2026-09-03
+
+The fourth syllabus entry, and the one that closes the ◧ row: `Pagination` was
+re-derived on 2026-09-02, the response models were not. Derived from
+`docs/api.md` and Build 2's DDL before the file was opened — the envelope shape,
+`JobSummary`'s omissions, `JobDetail` by inheritance, the truncation trio on
+`JobChange`, and `duration_seconds` as a `@computed_field` with its three null
+cases all came out matching. Two derived judgments matched the file for the
+reasons the file gives: `url` is a plain `str` and not `HttpUrl`, and `seniority`
+is `str` and not the filter enum, because a **response** model validates the
+output — a strict type there turns a bad stored value into a 500 on a row that
+exists.
+
+That is also what produced the finding, by applying the same test to the one
+field where the answer came out differently.
+
+| # | Finding | Status |
+|---|---------|--------|
+| 1 | `posted_at: date` is the only response field narrower than its column. A timestamp in TEXT is a `500`, and because `items` validates as a list it fails the **whole page**, not the row | Fixed — `verify_posted_at_shape` |
+| 2 | `SchemaContractError` said "missing a column"; it now covers a value-format contract too | Fixed — docstring |
+| 3 | `/runs` silently omits `rules_version`, where `/jobs` documents `content_hash` and `hash_version` as never served | Fixed — `docs/api.md` |
+| 4 | Five envelope classes duplicate `items`/`total`/`limit`/`offset`; a generic `Page[T]` would make their agreement structural | Observation only |
+
+**Finding 1 is latent, not live** — all 4,224 rows carry a bare `YYYY-MM-DD`
+today, so no request has ever failed this way. What made it worth code rather
+than a note in "Known coupling" is the blast radius: the other couplings in this
+build degrade locally (one filter matches nothing, one accent misses), while this
+one turns a single upstream write into `500` on the main endpoint's first page,
+since the default sort puts a new row there. `PRAGMA table_info` cannot see it —
+the column is present and correctly named, and TEXT affinity is exactly the
+promise that says nothing about values.
+
+**The gate's limit is stated rather than implied.** It samples at startup, so a
+row inserted afterwards still fails when served. That is the same incompleteness
+`verify_schema` has always had and never admitted; both now say so. Cost is one
+covering-index search on `idx_jobs_posted` — 6.1 ms for both gates against the
+real database.
+
+**Finding 4 was declined for the reason finding 1 was taken.** A generic
+`Page[T]` would deduplicate four classes, but it renames the schemas in
+`/openapi.json` (`Page_JobSummary_`), which every reader of the generated docs
+can see, in exchange for no behaviour. Five copies that agree is a cost paid in
+the file; renamed schemas is a cost paid by clients.
+
+**The method note from this run.** The derivation found this by asking one
+question of every field — *is this type wider or narrower than the column?* — and
+the answer was uninteresting ten times and then not. A checklist applied
+uniformly is what makes the eleventh case visible; reading the file top to bottom
+had not surfaced it in three prior passes.
+
+---
+
 ## Re-derivation syllabus
 
 Every file in this build was written by Claude and explained inline, with the
@@ -577,7 +629,7 @@ and the rest was not.
 | `src/jobsapi/errors.py` | 2026-09-01 | ⬜ |
 | `src/jobsapi/main.py` | 2026-09-01 | ⬜ |
 | `src/jobsapi/problems.py` | 2026-09-01 | ⬜ |
-| `src/jobsapi/schemas.py` | 2026-09-01 | ◧ 2026-09-02 — `Pagination` only; the response models were not |
+| `src/jobsapi/schemas.py` | 2026-09-01 | ✅ 2026-09-02 (`Pagination`) + 2026-09-03 (response models) |
 | `src/jobsapi/schemas.py` (Phase 3) | 2026-09-01 | ✅ 2026-09-02 |
 | `src/jobsapi/repository.py` | 2026-09-01 | ✅ 2026-09-03 |
 | `src/jobsapi/repository.py` (Phase 3) | 2026-09-01 | ✅ 2026-09-03 |
