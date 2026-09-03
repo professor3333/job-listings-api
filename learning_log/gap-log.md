@@ -907,3 +907,46 @@ build — the docs are generated from the types — holds with a condition attac
 and the condition is invisible from the document. That is why the test asserts
 the published schema and not only the status code: the two can disagree, and this
 build has already shipped one release where they did.
+
+### The image that did not shrink — 2026-09-03
+
+**Q1. Two size figures for one unchanged recipe, taken a day apart. What is the
+first question, and why is "what changed in the Dockerfile" the wrong one?**
+
+The first question is *what quantity is each number*. "What changed" presumes a
+change occurred, and that presumption survives contact with the evidence because
+a plausible culprit is nearly always available — here, `.dockerignore` gaining
+`.venv` would have explained the gap almost exactly (266 − 58.7 ≈ 207 MB, the
+right order for a dev virtualenv in one `COPY` layer). The arithmetic would have
+supported a conclusion that was false.
+
+What killed it was history: `git log -- Dockerfile .dockerignore` shows the last
+touch on 2026-09-01, *before* the larger measurement, with `.venv` and `data/`
+already excluded. The explanation was ruled out by the record rather than by
+argument.
+
+**Q2. The old command was never written down. Why did that not block the
+investigation?**
+
+Because a local probe existed that needed no history at all: build the image, ask
+Docker its size, then measure the actual filesystem inside a running container.
+`.Size` reported 58,673,663 bytes while `du -sx /` measured 196 MB of files — and
+no image built `FROM python:3.13-slim` can hold 196 MB of files in 58 MB of
+filesystem. The reported figure is therefore not a filesystem size, proved today,
+on this machine, without recovering anything.
+
+The general move: prefer the hypothesis that can be tested now over the one that
+requires reconstructing a configuration that is gone.
+
+**Q3. So what was actually defective?**
+
+The record. Docker had moved to the containerd image store, which reports
+compressed sizes, and the figure written down had no way to say what it was — so
+the toolchain changed underneath it silently and the number kept looking like a
+number. Five commands report five different quantities for one image. Writing
+`266 MB` without writing which command produced it makes the value
+unfalsifiable: it cannot be reproduced, and it cannot be compared.
+
+The same failure shape as the version check that this build already paid for:
+`v0.8.0` was internally consistent and wrong, and only an external reading of the
+artefact could tell. Here too, the artefact had to be asked directly.

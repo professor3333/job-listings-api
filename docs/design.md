@@ -226,11 +226,16 @@ goes to a separate database this service owns.
 > skewed-and-documented, and the third option was spent in Phase 6.
 >
 > **Not covered:** the application database. `/watchlists` reads a count and a
-> page separately too, but that file is WAL, this process is its only writer,
-> and the external-writer mechanism motivating this change does not apply.
-> Recorded as an open thread rather than folded in, because wrapping reads there
-> interleaves with the write path's implicit transactions and deserves its own
-> reasoning.
+> page separately too. Recorded as an open thread rather than folded in — but
+> note what that thread does *not* inherit. The whole trade above is a locking
+> trade, and it exists only because `jobs.db` is `journal_mode=delete`, where a
+> read snapshot extends a `SHARED` lock the writer must wait behind. The
+> application database is **WAL**, where a reader snapshots without blocking the
+> writer at all — the property this section gave up for `jobs.db` to keep the
+> bind mount read-only. So over there the same fix costs nothing, and the only
+> open question is correctness: it would interleave with the write path's
+> implicit transactions, which is worth its own reasoning rather than a
+> copy-paste.
 
 ---
 

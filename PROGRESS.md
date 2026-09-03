@@ -134,7 +134,7 @@ structurally cannot check.
 
 | Check | Result |
 |-------|--------|
-| image | ✅ `linux/arm64`, 266 MB |
+| image | ✅ `linux/arm64`, 266 MB — **quantity not recorded**, see the note below the v0.9.0 sequence |
 | `/jobs` total | ✅ **3498** — the real dataset |
 | `/sources` | ✅ all 8 |
 | `/stats` | ✅ 3,498 jobs · 63 runs · 3,592 changes |
@@ -294,19 +294,28 @@ All eleven met.
   a version to name. Docs move the tip; contract changes move the tag.
 - **A whitespace-only text filter is legal and nearly unfiltered.** `?q=%20`
   is a one-character search for a space: `min_length=1` does not touch it, so it
-  reaches the SQL as `LIKE '% %'` and matches almost every row. Left as-is
-  deliberately, and the line is stated in `docs/api.md` — the bound asks *"is
-  there a term"*, not *"is the term useful"*. Fixing it needs a stripping
+  reaches the SQL as `LIKE '% %'` and matches almost every row. It is the same
+  family as finding 4 by the **opposite mechanism** — `""` is falsy and was
+  *dropped* before reaching SQL, `" "` is truthy and is *applied* as a filter
+  that excludes almost nothing — and a client believes it filtered in both cases.
+  Left as-is deliberately, and the line is stated in `docs/api.md` — the bound
+  asks *"is there a term"*, not *"is the term useful"*. Fixing it needs a stripping
   `BeforeValidator`, which re-creates the `v0.8.1` `currency` failure (Pydantic
   withdraws `minLength` from `/openapi.json`) and would then need the
   `json_schema_extra` remedy on top. A test pins the case at `200` so the choice
   stays visible rather than becoming an accident.
 - **The application database's list endpoints read a count and a page
-  separately**, the same shape `read_snapshot` fixed for `jobs.db`. Not folded
-  into that change: this process is the app database's only writer and it is
-  WAL, so the external-writer mechanism does not apply, and wrapping reads there
-  interleaves with the write path's implicit transactions. Recorded in
-  `docs/design.md` under the Decision 1 addendum.
+  separately**, the same shape `read_snapshot` fixed for `jobs.db` — but it does
+  **not** inherit its twin's difficulty, and the thread was first recorded as if
+  it did. What made finding 1 a judgment call was locking: `jobs.db` is
+  `journal_mode=delete`, so holding a read snapshot across two statements extends
+  a `SHARED` lock a scraper commit must wait behind. That objection does not
+  exist here. The application database is **WAL**, where a reader takes a
+  consistent snapshot without blocking the writer at all — precisely the property
+  `docs/design.md` §1 identified as unavailable for `jobs.db` and gave up to keep
+  the bind mount read-only. So this is the same fix with the trade removed; the
+  only remaining care is that it interleaves with the write path's implicit
+  transactions, which is a correctness question rather than a cost.
 - **The `source` enum is coupled to Build 2's data.** If the scraper adds a
   source, this service rejects it with a 422 until `SOURCE_VALUES` is updated.
   A loud, documented failure rather than a filter that silently matches
@@ -403,12 +412,42 @@ own commit *before* the tag rather than assumed — the direct lesson of `v0.8.0
 | clean clone test | ✅ fresh clone → `uv sync` → 237 passed → demo DB → server; no `data/` in the clone |
 | README verification — read path | ✅ all 10 documented `curl`s run against the live server |
 | README verification — write path | ✅ 201+`Location`, 409, 201, the PATCH/PUT pair, 204 — `description` surviving a PATCH and cleared by a PUT, observed rather than assumed |
-| `docker build` | ✅ `linux/arm64`, 58.7 MB |
-| container checks | ✅ `id -u` 1001 · write to `/data/jobs.db` refused · healthcheck `healthy` · `docker stop` 1s exit 0 · JSON logs on stdout |
+| `docker build` | ✅ `linux/arm64`. `docker image inspect --format '{{.Size}}'` = 58.7 MB — **not comparable to the 266 MB above**, see below |
+| container checks | ✅ `id -u` 1001 · write to `/data/jobs.db` refused · healthcheck `healthy` · `docker stop` **exit 0**, inside the timeout · JSON logs on stdout |
 | new behaviour, live | ✅ `?q=` and `?company=` → 422; `?q=%20` and `?q=engineer` → 200 — in the container as well as the local server |
 | **version check — running server** | ✅ `/openapi.json` `info.version` = `0.9.0`, startup log = `0.9.0`, **and the same two inside the container** |
 | CI green on the merge commit | ✅ both jobs |
 | release / tag | ✅ v0.9.0, annotated, on the **merge commit** |
+
+**On the image size: there was no 4.5× improvement, and nothing to investigate.**
+`58.7 MB` and `266 MB` are two different quantities for the same image, not two
+measurements of a changed one. Established without needing to recover the old
+command:
+
+- The build recipe is **unchanged since 2026-09-01** — `git log -- Dockerfile
+  .dockerignore` last touches `7c0ec7d`/`c686b8b`, both before the 2026-09-02
+  measurement — and `.dockerignore` already excluded `.venv` and `data/` then.
+  So "a fat `COPY` layer got excluded afterwards" is ruled out by history.
+- Docker on this machine now uses the **containerd image store**
+  (`io.containerd.snapshotter.v1`), which reports compressed sizes. Proved
+  locally rather than assumed: the same image reports `.Size` = 58,673,663 bytes
+  while `du -sx /` inside a running container measures **196 MB** of actual
+  files. A number that small cannot be a filesystem size for an image built
+  `FROM python:3.13-slim`.
+
+**The defect is in the record, not the image.** "266 MB" was written down
+without the command that produced it, which makes it unreproducible and
+un-comparable the moment the toolchain changes underneath it — and the toolchain
+changed silently. `docker images` SIZE, `docker image inspect .Size`, `docker
+system df`, `docker history`'s total and a registry's compressed figure are five
+different quantities, and they differ by more than any change worth reporting.
+Figures from here carry their command.
+
+**On `docker stop`: the duration was never the assertion.** Whole-second shell
+arithmetic cannot distinguish 0.64 s from 1.0 s, so there is no delta between
+the two runs to explain. The property under test is that the container exited
+**0** rather than **137** — `SIGTERM` forwarded to PID 1 and handled, not a
+`SIGKILL` after the timeout expired. That is binary, and it passed.
 
 **One defect found, and it was in the verification rather than the software.**
 The first pass of the write-path `curl`s sent `{"notes": ...}` where the model
