@@ -6,7 +6,7 @@ Running status of the build. Updated by Claude as work lands.
 **Repo:** https://github.com/professor3333/job-listings-api (public)
 **Local path:** `~/code/job-listings-api`
 **Branch:** `main` — **Phases 1, 2, 3, 5, 6 shipped as v0.6.0**; **Phase 4 as v0.7.0**; **`/runs` duration as v0.8.0**; **re-derivation fixes as v0.8.1**; **read consistency and the empty-filter contract as v0.9.0**
-**CI:** 🟢 green — 240 tests passing, lint and format clean, Docker image built
+**CI:** 🟢 green — 248 tests passing, lint and format clean, Docker image built
 and smoke-tested on every push.
 **Releases:** [v0.6.0](https://github.com/professor3333/job-listings-api/releases/tag/v0.6.0)
 · [v0.7.0](https://github.com/professor3333/job-listings-api/releases/tag/v0.7.0)
@@ -304,18 +304,6 @@ All eleven met.
   withdraws `minLength` from `/openapi.json`) and would then need the
   `json_schema_extra` remedy on top. A test pins the case at `200` so the choice
   stays visible rather than becoming an accident.
-- **The application database's list endpoints read a count and a page
-  separately**, the same shape `read_snapshot` fixed for `jobs.db` — but it does
-  **not** inherit its twin's difficulty, and the thread was first recorded as if
-  it did. What made finding 1 a judgment call was locking: `jobs.db` is
-  `journal_mode=delete`, so holding a read snapshot across two statements extends
-  a `SHARED` lock a scraper commit must wait behind. That objection does not
-  exist here. The application database is **WAL**, where a reader takes a
-  consistent snapshot without blocking the writer at all — precisely the property
-  `docs/design.md` §1 identified as unavailable for `jobs.db` and gave up to keep
-  the bind mount read-only. So this is the same fix with the trade removed; the
-  only remaining care is that it interleaves with the write path's implicit
-  transactions, which is a correctness question rather than a cost.
 - **The `source` enum is coupled to Build 2's data.** If the scraper adds a
   source, this service rejects it with a 422 until `SOURCE_VALUES` is updated.
   A loud, documented failure rather than a filter that silently matches
@@ -499,6 +487,39 @@ Two correct decisions with no recorded reasoning were also written down, in
 gets "simplified": the tie-break's matching *direction* buys the keyset-pagination
 option, and under `sort=salary_min` ~70% of rows tie on NULL, so the tie-break is
 the ordering for most of the result set rather than a rare disambiguation.
+
+---
+
+## The application database's read snapshot — closed 2026-09-03
+
+The thread left open by the `v0.9.0` work, and the cheapest of the two, because
+it is the same fix with the trade removed. `read_snapshot` for `jobs.db` cost a
+real contention argument: rollback-journal mode means a read transaction holds
+`SHARED` and Build 2's commit waits behind it. The application database is WAL,
+where a reader snapshots without blocking the writer, so here the guarantee is
+free and only correctness was ever open.
+
+| Endpoint | Before | Now |
+|----------|--------|-----|
+| `GET /watchlists` | count and page read separately | one snapshot, page before count |
+| `GET /watchlists/{id}/jobs` | 404 gate, then page, then count — three independent reads | all three in one snapshot |
+
+**`appdb.read_snapshot` is deliberately not `db.read_snapshot`.** The read-only
+one ends its transaction unconditionally and suppresses failures, which is sound
+only because that connection cannot write — a fact its docstring now states
+precisely so it would not be copied. On a read-write connection those three
+lines would turn a swallowed `COMMIT` failure into data loss reported as success.
+So this one ends with `END` on the success path and lets errors surface, and
+**rolls back** on the failure path, suppressing only that so a tidy-up failure
+cannot replace the exception in flight. Two tests pin exactly that difference:
+a write inside a failing block does not survive, and one inside a successful
+block does.
+
+**The 404 race is sharper here than for `jobs.db`.** Its competing writer is
+*this service answering another request*, not an external scraper — so a
+concurrent `DELETE /watchlists/{id}` between the existence check and the count is
+an ordinary interleaving rather than a rare one. Pulling the gate inside the
+snapshot is what keeps a 404 from becoming a 200 with a total of zero.
 
 ---
 

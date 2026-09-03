@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 
 from fastapi import Request
 
@@ -95,6 +96,53 @@ def connect(settings: Settings) -> sqlite3.Connection:
     # it would not be for anything that had to be durable on acknowledgement.
     conn.execute("PRAGMA synchronous = NORMAL")
     return conn
+
+
+@contextmanager
+def read_snapshot(conn: sqlite3.Connection) -> Iterator[None]:
+    """Hold one consistent view across the reads that make up one answer.
+
+    Same problem as `db.read_snapshot` — a `total` counted separately from the
+    `items` it describes can disagree — but **deliberately not the same code**,
+    because this connection can write and that one cannot.
+
+    What does *not* carry over is the cost. The trade in `db.read_snapshot` is a
+    locking trade, and it exists only because `jobs.db` is `journal_mode=delete`,
+    where a read transaction holds `SHARED` and an external writer must wait
+    behind it. This database is WAL and this process is its only writer: a WAL
+    reader takes a snapshot without blocking the writer at all. So here the fix
+    is free, and the only question left is correctness.
+
+    That question is what shapes the ending. `db.read_snapshot` suppresses errors
+    from its `END` because a transaction that wrote nothing discards nothing —
+    reasoning that is true there and **false here**, where a swallowed failure
+    could be data loss reported as success. So:
+
+    - On the success path the transaction is ended with `END`, and any error from
+      it propagates. Nothing is in flight to mask.
+    - On the failure path it is rolled *back*, not committed. If a write ever
+      appears inside one of these blocks and then raises, discarding it is the
+      safe default; committing a half-finished change would not be. Only that
+      rollback is suppressed, and only so a tidy-up failure cannot replace the
+      exception actually being raised.
+
+    Used by the read endpoints only. No write path calls this: Python's `sqlite3`
+    opens its own implicit transaction before DML and commits it explicitly, and
+    interleaving the two transaction disciplines on one connection is exactly the
+    confusion this docstring exists to prevent.
+    """
+    conn.execute("BEGIN")
+    completed = False
+    try:
+        yield
+        completed = True
+    finally:
+        if conn.in_transaction:
+            if completed:
+                conn.execute("END")
+            else:
+                with suppress(sqlite3.Error):
+                    conn.execute("ROLLBACK")
 
 
 def ensure_schema(settings: Settings) -> None:

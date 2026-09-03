@@ -189,6 +189,7 @@ list only once it has been written up in `learning-log.md`.
 | 2026-09-01 | `docs/design.md` | Both Phase 0 decisions and the measurements behind them: `mode=ro` + path-not-policy config, and why WAL is *declined* rather than deferred | ☑ |
 | 2026-09-01 | `src/jobsapi/main.py` | Why an app *factory* rather than a module-level singleton, and what `include_router` does that the `@router.get` decorator did not | ☑ |
 | 2026-09-01 | `src/jobsapi/routers/meta.py` | Why `/health` is `async def` while every sqlite3 endpoint must be plain `def` — the rule is about what the body does, not house style | ☑ |
+| 2026-09-03 | `tests/test_appdb_snapshot.py` | Why the read-write snapshot needs its own tests rather than the read-only one's: the distinguishing behaviour is the *failure* path — a write inside a failing block must be rolled back, where the read-only version can safely end unconditionally | ☑ |
 | 2026-09-03 | `tests/test_snapshot.py` | Why a snapshot must be asserted through its *mechanism* (`conn.in_transaction` during the second read) rather than its symptom — a fixture database has no concurrent writer, so the skew it prevents is unreachable in tests by construction | ☑ |
 | 2026-09-01 | `tests/test_health.py` | Why `TestClient` is used as a context manager (lifespan events), and why the OpenAPI schema is asserted on rather than trusted | ☑ |
 | 2026-09-01 | `.github/workflows/ci.yml` | What `uv sync --locked` refuses to do, and why CI having no network and no `jobs.db` is the point rather than a limitation | ☑ |
@@ -1006,3 +1007,46 @@ invisible to a document generated from types.
 Worth recording that the `int` annotation is what makes this loud. Typed `str`,
 the same shadowing returns a 404 for a job named "recent", or a 200 of the wrong
 shape — a silent mis-route. The typed path parameter earns its place twice.
+
+### Closing the application-database snapshot — 2026-09-03
+
+**Q1. `db.read_snapshot` already existed and did the right thing. Why was
+importing it into the write path the wrong move?**
+
+Because its correctness argument does not travel. It ends its transaction
+unconditionally and suppresses any error from doing so, and that is sound
+*because the connection cannot write*: ending a transaction that wrote nothing
+discards nothing, so a failure there is tidy-up noise. Put the same three lines
+on a read-write connection and a swallowed `COMMIT` failure becomes data loss
+reported to the client as success.
+
+The scoping note in that docstring existed for precisely this moment — it was
+written when the function was, on the grounds that the pattern is right in one
+file and wrong one file over, which is the kind of thing that gets copied. It
+earned itself a day later.
+
+**Q2. Why was this the cheaper of the two open threads, when it looked like the
+same work?**
+
+Because the cost that made the `jobs.db` version a judgment call is absent here.
+That was a locking trade, and it exists only because `jobs.db` is
+`journal_mode=delete`: a read transaction holds `SHARED`, so a consistent read
+makes Build 2's commit wait. The application database is WAL, where readers
+snapshot without blocking the writer — the property `design.md` §1 named as
+unavailable for `jobs.db` and gave up to keep the bind mount read-only.
+
+The thread had been recorded as if it inherited that difficulty. Re-deriving why
+the first one was hard is what showed the second one was not.
+
+**Q3. What is different about the 404 race on `/watchlists/{id}/jobs` compared
+with `/jobs/{id}/changes`?**
+
+Only who the competing writer is, and it changes how likely the race is rather
+than whether it exists. For `jobs.db` it is Build 2's scraper, an external
+process committing a few dozen times a day. Here it is **this service answering
+another request** — a `DELETE /watchlists/{id}` arriving between the existence
+check and the count is an ordinary interleaving, not a rare one.
+
+The consequence is the same either way: the endpoint would report a 200 with a
+total of zero for a watchlist that no longer exists, collapsing "it is gone" into
+"it is empty" — the same two facts the sub-resource exists to keep apart.

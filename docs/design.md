@@ -225,17 +225,30 @@ goes to a separate database this service owns.
 > So the choice here is not free-standing: consistent-and-blocking, or
 > skewed-and-documented, and the third option was spent in Phase 6.
 >
-> **Not covered:** the application database. `/watchlists` reads a count and a
-> page separately too. Recorded as an open thread rather than folded in — but
-> note what that thread does *not* inherit. The whole trade above is a locking
-> trade, and it exists only because `jobs.db` is `journal_mode=delete`, where a
-> read snapshot extends a `SHARED` lock the writer must wait behind. The
-> application database is **WAL**, where a reader snapshots without blocking the
-> writer at all — the property this section gave up for `jobs.db` to keep the
-> bind mount read-only. So over there the same fix costs nothing, and the only
-> open question is correctness: it would interleave with the write path's
-> implicit transactions, which is worth its own reasoning rather than a
-> copy-paste.
+> **The application database, 2026-09-03 — the same fix with the trade removed.**
+> `/watchlists` and `/watchlists/{id}/jobs` read a count and a page separately
+> too, and now hold a snapshot across them. Note what that fix does *not*
+> inherit. The whole trade above is a locking trade, alive only because `jobs.db`
+> is `journal_mode=delete`, where a read transaction holds `SHARED` and the
+> writer must wait behind it. The application database is **WAL**, where a reader
+> snapshots without blocking the writer at all — the property this section gave
+> up for `jobs.db` to keep the bind mount read-only. So over there the guarantee
+> is free, and only correctness was ever in question.
+>
+> That question shaped the code rather than being waved at: `appdb.read_snapshot`
+> is deliberately **not** `db.read_snapshot`. The latter ends its transaction
+> unconditionally and suppresses failures, which is sound only because that
+> connection cannot write. On a read-write connection the same three lines would
+> make a swallowed `COMMIT` failure into data loss reported as success — so this
+> one ends with `END` on the success path and lets errors surface, and *rolls
+> back* on the failure path, suppressing only that, so a tidy-up failure cannot
+> replace the exception being raised.
+>
+> One case is sharper here than for `jobs.db`: the 404 gate on
+> `/watchlists/{id}/jobs` now sits inside the snapshot, because a concurrent
+> `DELETE` between the existence check and the count would turn a 404 into a 200
+> with a total of zero — and this database's competing writer is *this service
+> answering another request*, not an external scraper.
 
 ---
 

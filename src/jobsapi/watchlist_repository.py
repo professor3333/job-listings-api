@@ -12,6 +12,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import UTC, datetime
 
+from jobsapi.appdb import read_snapshot
 from jobsapi.errors import (
     DuplicateResource,
     WatchlistItemNotFound,
@@ -103,6 +104,21 @@ def list_watchlists(
         f"{_SELECT} ORDER BY w.created_at DESC, w.id DESC LIMIT ? OFFSET ?",
         (limit, offset),
     ).fetchall()
+
+
+def watchlists_page(
+    conn: sqlite3.Connection, *, limit: int, offset: int
+) -> tuple[list[sqlite3.Row], int]:
+    """One page and its total, from a single snapshot.
+
+    The same guarantee `jobs_page` gives, and here it costs nothing: WAL readers
+    snapshot without blocking the writer. Page first, count second — the order
+    that makes any residual skew a visible phantom page rather than silent loss.
+    """
+    with read_snapshot(conn):
+        rows = list_watchlists(conn, limit=limit, offset=offset)
+        total = count_watchlists(conn)
+    return rows, total
 
 
 def replace_watchlist(
@@ -264,3 +280,21 @@ def list_items(
         """,
         (watchlist_id, limit, offset),
     ).fetchall()
+
+
+def items_page(
+    conn: sqlite3.Connection, watchlist_id: int, *, limit: int, offset: int
+) -> tuple[list[sqlite3.Row], int]:
+    """Existence, page and total for one watchlist's items, in one snapshot.
+
+    The 404 gate joins the transaction rather than preceding it. Outside it, a
+    concurrent `DELETE /watchlists/{id}` between the existence check and the
+    count turns a 404 into a 200 with a total of zero — and unlike `jobs.db`,
+    where the only writer is Build 2's scraper, *this* database's writer is this
+    same service answering another request. The race is not hypothetical here.
+    """
+    with read_snapshot(conn):
+        get_watchlist(conn, watchlist_id)  # raises WatchlistNotFound -> 404
+        rows = list_items(conn, watchlist_id, limit=limit, offset=offset)
+        total = count_items(conn, watchlist_id)
+    return rows, total

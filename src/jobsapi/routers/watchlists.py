@@ -87,14 +87,12 @@ def list_watchlists(
     app_conn: Annotated[sqlite3.Connection, Depends(get_app_conn)],
 ) -> WatchlistPage:
     """Same envelope and the same `Pagination` model as every other listing."""
+    rows, total = watchlist_repository.watchlists_page(
+        app_conn, limit=pagination.limit, offset=pagination.offset
+    )
     return WatchlistPage(
-        items=[
-            dict(row)
-            for row in watchlist_repository.list_watchlists(
-                app_conn, limit=pagination.limit, offset=pagination.offset
-            )
-        ],
-        total=watchlist_repository.count_watchlists(app_conn),
+        items=[dict(row) for row in rows],
+        total=total,
         limit=pagination.limit,
         offset=pagination.offset,
     )
@@ -261,9 +259,7 @@ def list_jobs(
     Two queries and a dict lookup instead: one page of items, then one batched
     `WHERE id IN (...)` for their jobs. Not one query per row.
     """
-    watchlist_repository.get_watchlist(app_conn, watchlist_id)  # 404 before paging
-
-    rows = watchlist_repository.list_items(
+    rows, total = watchlist_repository.items_page(
         app_conn, watchlist_id, limit=pagination.limit, offset=pagination.offset
     )
     jobs = repository.get_jobs_by_ids(conn, [int(row["job_id"]) for row in rows])
@@ -283,7 +279,7 @@ def list_jobs(
 
     return WatchlistEntryPage(
         items=items,
-        total=watchlist_repository.count_items(app_conn, watchlist_id),
+        total=total,
         limit=pagination.limit,
         offset=pagination.offset,
     )
