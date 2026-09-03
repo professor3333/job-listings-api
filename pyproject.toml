@@ -1,6 +1,6 @@
 [project]
 name = "jobsapi"
-version = "0.8.1"
+version = "0.9.0"
 description = "Read-only REST API over the job-listing-scraper dataset"
 readme = "README.md"
 authors = [
