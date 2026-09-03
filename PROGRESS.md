@@ -380,7 +380,8 @@ concept behind each recorded in the implementation register in
 `learning_log/learning-log.md` — the register is closed.
 
 This table is the other half: the list to rebuild unaided, which is a different
-test from having read the explanation. Nothing is ticked yet.
+test from having read the explanation. Two rows are marked, one of them only
+partially — ◧ means part of the file was re-derived and the rest was not.
 
 | File | Written | Re-derived unaided |
 |------|---------|--------------------|
@@ -394,8 +395,8 @@ test from having read the explanation. Nothing is ticked yet.
 | `src/jobsapi/errors.py` | 2026-09-01 | ⬜ |
 | `src/jobsapi/main.py` | 2026-09-01 | ⬜ |
 | `src/jobsapi/problems.py` | 2026-09-01 | ⬜ |
-| `src/jobsapi/schemas.py` | 2026-09-01 | ⬜ |
-| `src/jobsapi/schemas.py` (Phase 3) | 2026-09-01 | ⬜ |
+| `src/jobsapi/schemas.py` | 2026-09-01 | ◧ 2026-09-02 — `Pagination` only; the response models were not |
+| `src/jobsapi/schemas.py` (Phase 3) | 2026-09-01 | ✅ 2026-09-02 |
 | `src/jobsapi/repository.py` | 2026-09-01 | ⬜ |
 | `src/jobsapi/repository.py` (Phase 3) | 2026-09-01 | ⬜ |
 | `src/jobsapi/repository.py` (Phase 5) | 2026-09-01 | ⬜ |
