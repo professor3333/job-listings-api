@@ -397,10 +397,16 @@ All eleven met.
   exclude entry has said `# Local working notes — never published` from the
   start. `PROGRESS.md` remains the copy that travels, which is why the
   version-check step is duplicated into it. **Do not re-track it without
-  asking.** The blob is still reachable in history at `af3bd18` — untracking
-  removes a file from the tip, never from the past — and was left there
-  deliberately: the file holds no credentials and no private links, so a
-  history rewrite would cost a force-push over a public `main` to buy nothing.
+  asking.** The blob was then **purged from history** with `git filter-repo`
+  and a force-push (2026-09-03). Untracking removes a file from the tip, never
+  from the past, so the purge was a separate operation from PR #32.
+  **It is not fully gone from GitHub**, and that is a property of the host, not
+  of the rewrite: a force-push never deletes unreachable objects, and
+  `refs/pull/31/head` keeps the old commits alive regardless. The file is still
+  fetchable at `af3bd18` and through PR #31's own diff. Only GitHub Support can
+  drop those refs and run the collection that reclaims the objects — the
+  request is filed under "remove sensitive data". No credentials were in the
+  file, so this is tidiness rather than an incident.
 
 ---
 
