@@ -272,6 +272,46 @@ The viva follows the entries, in Part 2.
   it returns rows. Recurred three times in this build — jobs, changes, runs —
   which is why it is written up rather than left in the gap log.
 
+## 2026-09-03 — The same guarantee is not the same code when the connection can write
+
+- **What broke:** *Carried forward, then closed.* `/watchlists` and
+  `/watchlists/{id}/jobs` read a count and a page separately, the shape
+  `read_snapshot` had just fixed for `jobs.db`. The thread was first recorded as
+  if it inherited its twin's difficulty. It does not.
+- **Why it happens:** The trade that made the `jobs.db` fix a judgment call is a
+  *locking* trade, and it exists only because that file is `journal_mode=delete`
+  — a read transaction holds `SHARED` and the external writer waits behind it.
+  The application database is **WAL**, where a reader takes a snapshot without
+  blocking the writer at all. That is precisely the property `design.md` §1
+  identified as unavailable for `jobs.db` and gave up to keep the container's
+  bind mount read-only. So the cost that dominated one decision is simply absent
+  from the other, and only correctness remained.
+- **What it teaches:** Three things.
+  1. **A thread carried forward can carry a stale reason with it.** "Same shape
+     as the thing we just did" imported the difficulty along with the shape, and
+     the difficulty was a property of the *journal mode*, not of the pattern.
+     Re-deriving why something was hard is part of picking it back up.
+  2. **Sharing the implementation would have been the bug.** `db.read_snapshot`
+     ends its transaction unconditionally and suppresses failures — sound only
+     because that connection cannot write, so ending a transaction that wrote
+     nothing discards nothing. On a read-write connection those same three lines
+     make a swallowed `COMMIT` failure into **data loss reported as success**.
+     The app-database version ends with `END` on the success path and lets errors
+     surface, and *rolls back* on the failure path, suppressing only that so a
+     tidy-up failure cannot replace the exception in flight.
+  3. **The 404 race is realer here.** For `jobs.db` the competing writer is
+     Build 2's scraper. Here it is *this service answering another request*, so a
+     concurrent `DELETE` between the existence check and the count is ordinary
+     rather than rare — which is why the gate moved inside the snapshot.
+- **Where it was applied:** `read_snapshot` in `src/jobsapi/appdb.py`;
+  `watchlists_page` and `items_page` in `src/jobsapi/watchlist_repository.py`;
+  the router now binds named locals. `docs/design.md` records it as the closing
+  entry of the Decision 1 locking ledger.
+- **How to detect it next time:** When reusing a pattern across two connections,
+  ask what the original's *safety argument* depended on, not what it did. Here
+  the argument was "this connection cannot write", and it was written into the
+  docstring for exactly this moment.
+
 ## 2026-09-03 — Route shadowing is decided by position, and the client is told about a parameter it never sent
 
 - **What broke:** *Designed out, not observed.* `/jobs/{job_id}` is declared
