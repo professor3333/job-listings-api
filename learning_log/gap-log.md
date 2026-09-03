@@ -1174,10 +1174,21 @@ code was right by intention rather than by evidence.
 
 ---
 
-## 2026-09-03 — explain-back: tracking `CLAUDE.md`
+## 2026-09-03 — explain-back: tracking `CLAUDE.md` (reverted the same day)
 
 No code changed here, so the questions are about the mechanism that hid the
 file rather than about a construct.
+
+**The change this describes was reverted at the owner's instruction (PR #32).**
+`CLAUDE.md` is untracked again and stays that way. The mechanism below is still
+correct and still worth knowing — it is *why* the file had been invisible to
+every other clone — but the conclusion drawn from it, that tracking was
+therefore the right fix, was not the owner's call to make on their behalf. The
+file is their working notes. Publishing to a public repo is one-way, and the
+question to ask first was "do you want this published", not "is it safe to
+publish", which is the only one that got asked. Recorded rather than deleted,
+because a reversed decision with its reasoning intact is worth more than a
+clean log.
 
 **Q1. `.gitignore` and `.git/info/exclude` both cause `git status` to stay
 quiet. What is the difference, and which one caused the file to go missing for
