@@ -376,19 +376,34 @@ All eleven met.
   `info.version` from `/openapi.json` and the startup log, and compare it to the
   tag about to be cut. `/health` deliberately carries no version — its
   `Literal["ok"]` contract is narrow on purpose and was not widened to make the
-  check convenient. The step lives in `CLAUDE.md`, which is untracked and
-  therefore local-only, so it is recorded here as well: this file is the copy
-  that travels with a clone.
+  check convenient. The step lives in `CLAUDE.md`, which was untracked and
+  therefore local-only, so it was recorded here as well. `CLAUDE.md` is
+  **tracked as of 2026-09-03**, so both copies now travel with a clone; this
+  one is kept because a duplicated ship step is cheaper than a missing one.
 - ~~`CLAUDE.md` cited a commit that no longer exists~~ **Fixed on disk
   2026-09-02**, both references now naming `cf6594b` — but *not* in PR #12's
   diff, because `CLAUDE.md` is excluded in `.git/info/exclude` and has never
-  been tracked. That exclusion is local-only, so it does not travel with a
-  clone; the file is simply absent from the repository for everyone else.
+  been tracked. That exclusion was local-only, so it did not travel with a
+  clone; the file was simply absent from the repository for everyone else —
+  **closed 2026-09-03, see below.**
   The old id `9172d74` was not merely stale: the object still resolves in a
   clone predating the rewrite, so `git cat-file -t` reports a perfectly good
   commit and the reference looks sound from the machine that wrote it.
   `git merge-base --is-ancestor` is the check that matters, and it says
   unreachable from `main`.
+- ~~`CLAUDE.md` was absent from the repository for everyone but its author~~
+  **Tracked 2026-09-03.** The operating contract, the division-of-labour table,
+  the phase plan and the ship sequence were all local-only: a stranger cloning
+  the repo got the code and `PROGRESS.md` and nothing that said how the build
+  was meant to run. The entry in `.git/info/exclude` read
+  `# Local working notes — never published`, so the absence was deliberate
+  once; it stopped being deliberate when the file became the project's
+  operating contract rather than a scratchpad. Scanned for private URLs and
+  secrets before publishing — the lesson of PR #13, where the public README
+  pointed at four 404s on the private scraper repo — and it was clean: no
+  links, no credentials, and the only `~/code/...` paths are tilde-relative.
+  The exclude entry is removed as well, because an ignore rule has no effect
+  on a tracked file and would only mislead the next reader.
 
 ---
 
