@@ -336,6 +336,50 @@ def schema_sql() -> str:
 
 
 @pytest.fixture
+def runs_only_source_client(tmp_path: Path) -> Iterator[TestClient]:
+    """A client whose database has a source with a run row and no jobs.
+
+    The asymmetry `/sources` depends on and no other fixture produces: the
+    standard five rows give every source both a job and a run, and so does the
+    real dataset — all eight sources appear in both tables.
+    """
+    path = tmp_path / "runs-only.db"
+    build_database(path)
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute(
+            "INSERT INTO runs (id, source, started_at, status) VALUES (?, ?, ?, ?)",
+            (99, "lever:ghost", "2026-09-01T00:00:00+00:00", "ok"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    settings = Settings(db_path=path, app_db_path=tmp_path / "runs-only-app.db")
+    with TestClient(create_app(settings)) as client:
+        yield client
+
+
+@pytest.fixture
+def empty_client(tmp_path: Path) -> Iterator[TestClient]:
+    """A client over a database with the right schema and no rows at all.
+
+    The state every aggregate has to survive and no fixture otherwise produces:
+    `/stats` divides by `COUNT(*)` to report coverage, and on an empty table that
+    denominator is zero.
+    """
+    path = tmp_path / "empty.db"
+    conn = sqlite3.connect(path)
+    try:
+        conn.executescript(SCHEMA)
+        conn.commit()
+    finally:
+        conn.close()
+    settings = Settings(db_path=path, app_db_path=tmp_path / "empty-app.db")
+    with TestClient(create_app(settings)) as client:
+        yield client
+
+
+@pytest.fixture
 def database_with_posted_at(tmp_path: Path) -> Callable[[str], Path]:
     """A fixture database with one chosen `posted_at` value in it.
 

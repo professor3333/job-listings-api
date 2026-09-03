@@ -1108,3 +1108,66 @@ f-string, even though it is a module constant and interpolating it would be
 safe. A GLOB pattern is a value, and this build's rule is that values go through
 placeholders — the exception that is safe today is the example someone copies
 tomorrow.
+
+### Re-derivation — `repository.py` Phase 5 — 2026-09-03
+
+**Q1. `/sources` joins two tables and counts rows. What is the trap in that
+sentence, and what disarms it here?**
+
+Fan-out. `FROM jobs j JOIN runs r ON r.source = j.source` produces one row per
+*(job, run)* pair, so `COUNT(*)` would report jobs × runs — a source with 500
+jobs and 12 runs reporting 6,000. The count is wrong by a factor nobody can spot
+from the outside, because it is still a plausible number.
+
+What disarms it is that the join condition is `r.id = (SELECT MAX(id) FROM runs
+WHERE source = j.source)` — a correlated subquery matching **exactly one** run
+row per source, so the grain of the result stays one row per job and `COUNT(*)`
+counts jobs. The `LEFT` is a second, separate guarantee: it keeps a source whose
+subquery returns NULL.
+
+The general rule worth carrying: an aggregate over a join is only meaningful if
+you can say what one row of the joined result *is*. Here it is "one job, plus
+that source's latest run", which is countable. "One job-run pair" is not.
+
+**Q2. The docstring claimed the LEFT JOIN protects a source with runs and no
+jobs. Why is that false, and why did it survive review?**
+
+Because a LEFT JOIN preserves rows from the **driving** table, and the driving
+table is `jobs`. A source with run rows and no jobs contributes nothing to
+`FROM jobs`, so there is no row to preserve and no group to emit — it is absent
+regardless of the join type. The claim describes a RIGHT JOIN, or a driving
+table this query does not have.
+
+It survived because it was never false *in observation*. All eight real sources
+appear in both tables, and the fixture's four do too, so every test and every
+manual check agreed with the wrong sentence and the right one equally. This is
+the second time in this build that a claim was protected by data rather than by
+being true — the first was the `/sources` LEFT JOIN itself, already recorded as
+"defensive, not load-bearing". Same query, same blind spot, one level down.
+
+The fix is a test that constructs the state reality does not provide: a run row
+for `lever:ghost`, a source with no jobs, asserted absent.
+
+**Q3. `/stats` takes a snapshot so its six reads agree. What does that
+guarantee, and what does it not?**
+
+It guarantees they all describe **one state of the database** — no scraper
+commit lands between the fourth read and the fifth, so the counts cannot be from
+four different worlds.
+
+It does not guarantee they describe that state *consistently*. `remote` is
+reported twice by two different queries — as a coverage row from the SUM-per-
+field scan, and as the tri-state split from its own SELECT — and a snapshot makes
+them see identical rows while saying nothing about whether the two expressions
+compute the same thing. Nothing checked that `coverage.remote.missing` equals
+`remote_unknown`, that `present + missing` equals `total_jobs`, or that the
+ratio matches its own numerator. Those are the invariants a client assumes
+without being told.
+
+Snapshot isolation is about *when* the reads happen. Agreement is about *what
+they compute*, and only an assertion covers that. Four tests now do.
+
+The empty database is the same gap from the other end: `coverage` divides by
+`COUNT(*)`, and `SUM` over no rows is NULL rather than 0. Both guards existed —
+`if total else 0.0`, and `or 0` — and neither was exercised by any test, so the
+code was right by intention rather than by evidence.

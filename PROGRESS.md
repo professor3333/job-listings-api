@@ -6,7 +6,7 @@ Running status of the build. Updated by Claude as work lands.
 **Repo:** https://github.com/professor3333/job-listings-api (public)
 **Local path:** `~/code/job-listings-api`
 **Branch:** `main` — **Phases 1, 2, 3, 5, 6 shipped as v0.6.0**; **Phase 4 as v0.7.0**; **`/runs` duration as v0.8.0**; **re-derivation fixes as v0.8.1**; **read consistency and the empty-filter contract as v0.9.0**; **the application-database snapshot and the `posted_at` startup gate as v0.9.1**
-**CI:** 🟢 green — 252 tests passing, lint and format clean, Docker image built
+**CI:** 🟢 green — 261 tests passing, lint and format clean, Docker image built
 and smoke-tested on every push.
 **Releases:** [v0.6.0](https://github.com/professor3333/job-listings-api/releases/tag/v0.6.0)
 · [v0.7.0](https://github.com/professor3333/job-listings-api/releases/tag/v0.7.0)
@@ -659,6 +659,51 @@ had not surfaced it in three prior passes.
 
 ---
 
+## Re-derivation — `repository.py` Phase 5, run 2026-09-03
+
+The fifth syllabus entry, and the last unticked slice of a file whose other two
+were re-derived on 2026-09-03: `/sources`, `/stats`, the `runs` projection and
+its tie-break. Derived from `docs/api.md` before the file was opened. The
+greatest-n-per-group shape, the correlated subquery, the `LEFT` for a source with
+no runs, `SUM(CASE …)` for coverage in one scan rather than nine, and
+`ORDER BY started_at DESC, id DESC` all matched.
+
+The derivation asked three questions of the aggregates — *what is one row of this
+join, what happens on an empty table, and do the numbers agree with each other* —
+and the first was answered correctly by the code, the second by an unexercised
+guard, the third not at all.
+
+| # | Finding | Status |
+|---|---------|--------|
+| 1 | `list_sources`'s docstring claimed the LEFT JOIN protects a source with runs and no jobs. It cannot: `FROM jobs` is the driving table, so such a source is absent by construction | Fixed — docstring + a test that builds the state |
+| 2 | Nothing asserted `/stats` agrees with itself. `remote` is reported twice by two different queries, and `present + missing == total_jobs` was never checked | Fixed — 3 invariant tests |
+| 3 | The empty-database guards (`if total else 0.0`, `or 0`) were right by intention and exercised by nothing | Fixed — `empty_client` fixture, 4 tests |
+| 4 | The `posted_at` gate shipped in v0.9.1 protects `/stats`'s date range too, which was undocumented | Fixed — `docs/api.md` |
+
+**Finding 1 is the one worth keeping.** The claim was false and every test
+agreed with it anyway, because all eight real sources and all four fixture
+sources appear in both tables — so the wrong sentence and the right one predict
+identical output everywhere the suite or the dataset can look. It is the second
+time this exact query has been protected by data rather than by being correct;
+the first is already in Open threads as "the `/sources` LEFT JOIN is defensive,
+not load-bearing". Same query, same blind spot, one level down.
+
+**Finding 2 is the sharper lesson about the v0.9.0 snapshot work.** That fix
+guaranteed `/stats`'s six reads see one state of the database. It says nothing
+about whether the two expressions that both count `remote` compute the same
+thing — snapshot isolation is about *when* reads happen, agreement is about
+*what they compute*. A response that is internally contradictory is exactly the
+kind of wrong no client can detect, which is the reason the snapshot was taken;
+the assertion half was missing.
+
+**The method note.** Both findings came from asking a question the file cannot
+answer about itself: *what state would make this claim false, and does anything
+produce it?* Neither the real dataset nor the fixture produces a runs-only source
+or an empty table, so both had to be constructed. Three of this build's last four
+findings have been unreachable without building a state reality does not supply.
+
+---
+
 ## Re-derivation syllabus
 
 Every file in this build was written by Claude and explained inline, with the
@@ -686,7 +731,7 @@ and the rest was not.
 | `src/jobsapi/schemas.py` (Phase 3) | 2026-09-01 | ✅ 2026-09-02 |
 | `src/jobsapi/repository.py` | 2026-09-01 | ✅ 2026-09-03 |
 | `src/jobsapi/repository.py` (Phase 3) | 2026-09-01 | ✅ 2026-09-03 |
-| `src/jobsapi/repository.py` (Phase 5) | 2026-09-01 | ⬜ |
+| `src/jobsapi/repository.py` (Phase 5) | 2026-09-01 | ✅ 2026-09-03 |
 | `src/jobsapi/logging_config.py` | 2026-09-01 | ⬜ |
 | `src/jobsapi/routers/jobs.py` | 2026-09-01 | ✅ 2026-09-03 |
 | `src/jobsapi/routers/meta.py` | 2026-09-01 | ⬜ |
