@@ -336,6 +336,31 @@ def schema_sql() -> str:
 
 
 @pytest.fixture
+def database_with_posted_at(tmp_path: Path) -> Callable[[str], Path]:
+    """A fixture database with one chosen `posted_at` value in it.
+
+    The values counterpart to `schema_sql`: that one exists for tests that need
+    a deliberately wrong *schema*, this one for a schema that is perfectly right
+    while the data in it has stopped being what the contract says. The value is
+    written by `UPDATE` after a normal build rather than by editing a positional
+    row tuple, so the test names the column instead of counting to it.
+    """
+
+    def build(value: str) -> Path:
+        path = tmp_path / "posted-at.db"
+        build_database(path)
+        conn = sqlite3.connect(path)
+        try:
+            conn.execute("UPDATE jobs SET posted_at = ? WHERE id = 1", (value,))
+            conn.commit()
+        finally:
+            conn.close()
+        return path
+
+    return build
+
+
+@pytest.fixture
 def db_path(tmp_path: Path) -> Path:
     """A fresh, populated database file for one test."""
     path = tmp_path / "jobs.db"

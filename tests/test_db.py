@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -19,7 +20,7 @@ from jobsapi.errors import (
     SchemaContractError,
 )
 from jobsapi.main import create_app
-from jobsapi.schemas import JobFilters
+from jobsapi.schemas import JobFilters, JobPage
 
 
 class TestReadOnly:
@@ -68,6 +69,66 @@ class TestStartupChecks:
         app = create_app(Settings(db_path=tmp_path / "absent.db"))
         with pytest.raises(SchemaContractError), TestClient(app):
             pass
+
+
+class TestPostedAtShape:
+    """`posted_at` is served as a `date` — the one response field declared
+    narrower than the column it reads.
+
+    SQLite's TEXT holds anything, so `PRAGMA table_info` cannot see this class
+    of drift at all: the column is present and correctly named while its values
+    have stopped being dates.
+    """
+
+    def test_a_timestamp_is_refused_at_startup(
+        self, database_with_posted_at: Callable[[str], Path]
+    ) -> None:
+        path = database_with_posted_at("2026-08-30T12:30:00+00:00")
+        with pytest.raises(SchemaContractError, match="posted_at"):
+            check_database(Settings(db_path=path))
+
+    def test_a_ten_character_non_date_is_refused_too(
+        self, database_with_posted_at: Callable[[str], Path]
+    ) -> None:
+        """Why the check is a GLOB and not `length(posted_at) <> 10`.
+
+        `"not-a-date"` is exactly ten characters and fails validation just as
+        surely as a timestamp does. A length test would pass it through to the
+        500 the gate exists to prevent.
+        """
+        path = database_with_posted_at("not-a-date")
+        with pytest.raises(SchemaContractError, match="posted_at"):
+            check_database(Settings(db_path=path))
+
+    def test_bare_dates_and_nulls_pass(self, settings: Settings) -> None:
+        """The fixture database carries both, including a NULL `posted_at`."""
+        check_database(settings)
+
+    def test_the_failure_being_prevented_takes_the_whole_page(
+        self, database_with_posted_at: Callable[[str], Path]
+    ) -> None:
+        """The reason a startup gate is worth one query.
+
+        Pinned on the mechanism rather than the symptom: with the gate bypassed,
+        a single malformed row does not degrade to one bad item — `JobPage.items`
+        validates as a list, so the page containing it cannot be built at all.
+        Every page containing that row is a 500 on data that plainly exists.
+        """
+        path = database_with_posted_at("2026-08-30T12:30:00+00:00")
+        conn = connect(Settings(db_path=path))
+        try:
+            rows = repository.list_jobs(conn, JobFilters())
+        finally:
+            conn.close()
+
+        assert rows, "the row is readable; it is only unservable"
+        with pytest.raises(ValidationError, match="posted_at"):
+            JobPage(
+                items=[dict(row) for row in rows],
+                total=len(rows),
+                limit=20,
+                offset=0,
+            )
 
 
 class TestErrorClassification:

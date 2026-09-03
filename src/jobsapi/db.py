@@ -166,6 +166,52 @@ def verify_schema(conn: sqlite3.Connection) -> None:
         )
 
 
+# `posted_at` is served as a `date`, which is the one response field declared
+# narrower than the column it reads: SQLite's TEXT holds anything, and a value
+# carrying a time component fails Pydantic with "Datetimes provided to dates
+# should have zero time". The failure lands mid-page rather than at startup,
+# and because `JobPage.items` validates as a list it takes the whole page with
+# it — one malformed row makes every page containing it a 500 on data that
+# plainly exists. GLOB is the shape test rather than `length() <> 10`, because
+# a ten-character non-date fails validation just as surely as a timestamp.
+_POSTED_AT_DATE_GLOB = "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]"
+
+
+def verify_posted_at_shape(conn: sqlite3.Connection) -> None:
+    """Fail loudly if `posted_at` holds anything but a bare ISO date.
+
+    A column-presence check cannot see this: the column is there and its
+    affinity is TEXT, so drift in the *format* of the values is invisible to
+    `PRAGMA table_info`. This is the same trade `verify_schema` already makes
+    one function up — a refusal to start, naming the column, in place of a
+    silent wrong answer later — applied to the one type narrowing in the
+    response models.
+
+    **The check is a startup sample, not a per-request guarantee.** Build 2 can
+    insert a row after this has run, and that row still fails validation when it
+    is served. What this buys is the common case: drift that is already in the
+    file when the service starts is named at startup instead of surfacing as a
+    500 on whichever page happens to contain it.
+
+    One covering-index search on `idx_jobs_posted`, stopped at the first
+    offender by `LIMIT 1`. The pattern is *bound*, not interpolated: it is a
+    module constant and interpolating it would be safe, but a GLOB pattern is a
+    value and every value in this file goes through a placeholder.
+    """
+    row = conn.execute(
+        "SELECT posted_at FROM jobs "
+        "WHERE posted_at IS NOT NULL AND posted_at NOT GLOB ? "
+        "LIMIT 1",
+        (_POSTED_AT_DATE_GLOB,),
+    ).fetchone()
+    if row is not None:
+        raise SchemaContractError(
+            "Column 'jobs.posted_at' holds a value that is not a bare ISO date "
+            f"(YYYY-MM-DD): {row['posted_at']!r}. This service serves the column "
+            "as a date and cannot represent that value."
+        )
+
+
 def check_database(settings: Settings) -> None:
     """Startup gate: the database must exist, open read-only, and match.
 
@@ -178,6 +224,7 @@ def check_database(settings: Settings) -> None:
     conn = connect(settings)
     try:
         verify_schema(conn)
+        verify_posted_at_shape(conn)
     finally:
         conn.close()
 

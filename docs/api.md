@@ -400,6 +400,12 @@ The value is computed in `RunSummary`, not in SQL. By then both columns are
 `datetime` objects and the subtraction is exact; `julianday()` would convert to
 a float day number and lose the microseconds the whole discrimination rests on.
 
+`rules_version` is not served. It is Build 2's bookkeeping — which parser rules
+produced the run — in the same family as `content_hash` and `hash_version` on
+`/jobs`, and means nothing to a client of this API. The columns served are `id`,
+`source`, `status`, `started_at`, `finished_at`, `rows_parsed`, `pages_fetched`
+and `page_cap`, plus the derived `duration_seconds`.
+
 ---
 
 ## `GET /stats`
@@ -447,6 +453,30 @@ board, this service rejects that source with `422` until the tuple is updated.
 That is deliberate — a static enum keeps `/openapi.json` accurate and avoids a
 database round-trip during validation — but it is a coupling to remember, and
 the reason `SOURCE_VALUES` carries a comment saying so.
+
+The second coupling is `posted_at`. It is served as a `date`, which is the one
+response field declared **narrower** than the column it reads: `jobs.posted_at`
+is TEXT, and TEXT holds anything. Every one of the 4,224 rows is a bare
+`YYYY-MM-DD` today (measured 2026-09-03), so the narrowing is honest — but if
+Build 2 ever writes a timestamp there, Pydantic refuses it with *"Datetimes
+provided to dates should have zero time"* and the row becomes unservable.
+
+The failure would not be confined to that row. `items` is validated as a list,
+so one malformed value fails the **whole page** — every page containing it is a
+`500` on data that plainly exists, and `PRAGMA table_info` cannot see it coming
+because the column is present and correctly named.
+
+So the startup gate checks the values as well as the columns: `verify_posted_at_shape`
+samples for the first `posted_at` that is not a bare ISO date and refuses to
+start, naming the value. It is a **startup sample, not a per-request guarantee** —
+a row inserted after startup still fails when it is served. What it converts is
+drift that is already in the file: a named refusal at boot instead of a 500 on
+whichever page is unlucky. Cost is one covering-index search on `idx_jobs_posted`
+(6.1 ms for both startup gates against the real database).
+
+Widening the field to `datetime` was the alternative and was declined: it would
+change `/openapi.json` from `format: date` to `format: date-time` for every
+client, to accommodate data that does not exist.
 
 ---
 

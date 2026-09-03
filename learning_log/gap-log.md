@@ -1050,3 +1050,61 @@ check and the count is an ordinary interleaving, not a rare one.
 The consequence is the same either way: the endpoint would report a 200 with a
 total of zero for a watchlist that no longer exists, collapsing "it is gone" into
 "it is empty" — the same two facts the sub-resource exists to keep apart.
+
+### Re-derivation — `schemas.py` response models — 2026-09-03
+
+**Q1. Every response field is a type. Why is exactly one of them a liability,
+and what makes it invisible to the check that already exists?**
+
+Because one type is *narrower than its column*. Ten of the eleven `JobSummary`
+fields are as wide as or wider than what SQLite can hand back: `str | None`
+accepts any TEXT, `int | None` any INTEGER, and `datetime` accepts a bare date
+(it reads as midnight). `posted_at: date` is the exception — it rejects a value
+SQLite is perfectly happy to store, and Pydantic v2 is explicit about it:
+`"Datetimes provided to dates should have zero time"`.
+
+`PRAGMA table_info` cannot see this because it is not a schema fact. The column
+is present, correctly named, and TEXT — which is precisely the affinity that
+promises nothing about the values. `verify_schema` checks the shape of the
+container while this drift happens inside it.
+
+Worth recording what the check does *not* cover: `remote: bool | None` is a
+second narrowing, since a stored `2` would fail the same way. It is left
+unguarded because the column is Build 2's own tri-state boolean and only ever
+holds NULL/0/1 (verified: 1,212 / 2,785 / 227 rows), whereas `posted_at`'s
+format is a *string convention* with nothing enforcing it.
+
+**Q2. The bad row is one row out of 4,224. Why is the blast radius the whole
+page, and why does that turn a documentation note into a code change?**
+
+Because `JobPage.items` is `list[JobSummary]`, and a list validates as a unit.
+There is no partial success: the page either builds or it does not. So one
+malformed value takes out every request whose page contains it — and under the
+default `sort=posted_at desc` a newly-inserted bad row sorts to page one, where
+everybody lands.
+
+That asymmetry is what settled it. The other couplings in this build (the
+`source` enum, `LIKE`'s ASCII case-folding) degrade *locally* — one filter
+returns nothing, one query misses an accent — so documenting the bound is a
+proportionate response. This one converts a single upstream write into a
+service that answers 500 to its main endpoint, so it earns a gate.
+
+**Q3. The gate is admittedly incomplete. Why ship a check that cannot promise
+what it appears to promise?**
+
+It is a startup sample: a row written after boot still fails when served. The
+honest claim is narrow — *drift already in the file is named at startup instead
+of surfacing as a 500 on whichever page is unlucky* — and the docstring says so
+in those words rather than implying a per-request guarantee.
+
+That is the same trade `verify_schema` already makes and never states: a column
+dropped after startup is equally invisible to it. Two failure modes, one loud at
+boot and one still latent, is strictly better than two latent — and the cost is
+one covering-index search on `idx_jobs_posted`, `LIMIT 1`, 6.1 ms for both gates
+together against the real 4,224-row database.
+
+The related discipline: the GLOB pattern is a *bound parameter*, not an
+f-string, even though it is a module constant and interpolating it would be
+safe. A GLOB pattern is a value, and this build's rule is that values go through
+placeholders — the exception that is safe today is the example someone copies
+tomorrow.

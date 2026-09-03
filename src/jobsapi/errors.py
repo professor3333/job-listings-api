@@ -39,12 +39,19 @@ class DatabaseWedged(JobsAPIError):
 
 
 class SchemaContractError(JobsAPIError):
-    """The database is missing a column this service reads.
+    """The source database does not match what this service reads.
 
     The source schema carries no version (`user_version` is 0), so drift cannot
-    be detected by comparing a number. Checking the columns directly at startup
-    is the only defence available, and it turns a silent wrong answer into a
-    loud refusal to start.
+    be detected by comparing a number. Checking at startup is the only defence
+    available, and it turns a silent wrong answer into a loud refusal to start.
+
+    Two different contracts raise this, and only the first is a *schema* fact:
+
+    - a **missing column**, found by `PRAGMA table_info`;
+    - a **`posted_at` value that is not a bare ISO date**, found by sampling the
+      column. TEXT affinity means the schema is no help here — the column is
+      present and correctly named while its values have stopped being dates, and
+      the response model that serves it as a `date` would fail mid-page.
     """
 
 
