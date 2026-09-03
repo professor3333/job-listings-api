@@ -131,6 +131,14 @@ def read_snapshot(conn: sqlite3.Connection) -> Iterator[None]:
     closed immediately afterwards — which releases the transaction anyway — and
     raising from a `finally` would replace the real exception with a tidy-up
     failure, turning a 503 into a 500.
+
+    **That suppression is safe only because this connection can only read.**
+    Ending a transaction that wrote nothing discards nothing, so a failure here
+    is genuinely tidy-up noise. Copied to the application database — read-write,
+    and where a swallowed `COMMIT` failure would be data loss reported to the
+    client as success — the same three lines would be a serious bug. The pattern
+    is right in this file and wrong one file over, which is precisely why it is
+    written down rather than left to be inferred from context.
     """
     conn.execute("BEGIN")
     try:
