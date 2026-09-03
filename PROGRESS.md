@@ -5,7 +5,7 @@ Running status of the build. Updated by Claude as work lands.
 **Last updated:** 2026-09-03
 **Repo:** https://github.com/professor3333/job-listings-api (public)
 **Local path:** `~/code/job-listings-api`
-**Branch:** `main` — **Phases 1, 2, 3, 5, 6 shipped as v0.6.0**; **Phase 4 as v0.7.0**; **`/runs` duration as v0.8.0**; **re-derivation fixes as v0.8.1**; **read consistency and the empty-filter contract as v0.9.0**
+**Branch:** `main` — **Phases 1, 2, 3, 5, 6 shipped as v0.6.0**; **Phase 4 as v0.7.0**; **`/runs` duration as v0.8.0**; **re-derivation fixes as v0.8.1**; **read consistency and the empty-filter contract as v0.9.0**; **the application-database snapshot and the `posted_at` startup gate as v0.9.1**
 **CI:** 🟢 green — 252 tests passing, lint and format clean, Docker image built
 and smoke-tested on every push.
 **Releases:** [v0.6.0](https://github.com/professor3333/job-listings-api/releases/tag/v0.6.0)
@@ -13,6 +13,7 @@ and smoke-tested on every push.
 · [v0.8.0](https://github.com/professor3333/job-listings-api/releases/tag/v0.8.0)
 · [v0.8.1](https://github.com/professor3333/job-listings-api/releases/tag/v0.8.1)
 · [v0.9.0](https://github.com/professor3333/job-listings-api/releases/tag/v0.9.0)
+· [v0.9.1](https://github.com/professor3333/job-listings-api/releases/tag/v0.9.1)
 
 Build 3 of Stage 0. A FastAPI service over the dataset Build 2 collected,
 exposed as a REST API with real input validation. The exit criterion was **"the
@@ -445,6 +446,58 @@ and the README was right; the transcription was wrong. Recorded because "verify
 every documented command" means running *the documented command*, and a
 paraphrase of it tests something else. The corrected run used the README's bodies
 verbatim.
+
+---
+
+## Ship sequence — v0.9.1, run 2026-09-03
+
+A patch release for two behaviour changes that are invisible on the wire. The
+reading that cut it is the same one that cut `v0.8.1` for re-derivation fixes:
+docs move the tip, behaviour moves the tag — and "a database that booted under
+`v0.9.0` is refused by `v0.9.1`" is something an operator needs a version to
+name, even though no response shape changed.
+
+| Step | Result |
+|------|--------|
+| tests | ✅ 252 passed (4 new since v0.9.0) |
+| tests with `jobs.db` absent | ✅ 252 passed, `JOBSAPI_DB_PATH` pointed at a path that does not exist |
+| home directory untouched by the suite | ✅ `~/.local/share/jobsapi/app.db` mtime and size identical either side of a full run |
+| lint / format | ✅ `ruff check` clean, `ruff format --check` clean on 37 files |
+| clean clone test | ✅ fresh clone → `uv sync` → 252 passed → demo DB → server; no `data/` in the clone |
+| README verification | ⚠️ passed, and **found a defect** — see below |
+| version check | ⚠️ **fired on the first attempt**, correctly — see below |
+| startup gates against the real database | ✅ both, 6.1 ms, 4,224 rows |
+| commit / push | ✅ PR #28 |
+| CI green | ✅ both jobs |
+| release / tag | ✅ v0.9.1, annotated tag + GitHub release |
+
+**The version check fired, and the cause was the sequence rather than the app.**
+The clean clone was taken before the version bump was committed, so the clone
+carried `0.9.0` and reported it. That is the check doing exactly its job — it
+cannot distinguish "the app reports the wrong version" from "you cloned the
+wrong commit", and it should not: both mean *the artefact about to be tagged is
+not the artefact that was tested*. Committing the bump first and re-cloning gave
+`0.9.1` in both `/openapi.json` and the startup log.
+
+Worth recording because the step was added after `v0.8.0` shipped an app
+reporting `0.7.0`, and this is the first run where it caught something. The
+lesson it taught is narrower than the one it was built for: **the bump must be
+committed before the artefact is built, not merely before the tag.**
+
+**README verification found the demo database had no positive case for
+`duration_seconds`.** All three demo runs were zero-duration or unfinished, so
+every one reported `null` — and a stranger following the README, plus CI's
+container smoke test, sees only this database. The test fixture had been given a
+post-fix run deliberately when the field shipped ("so `duration_seconds` has a
+positive case to prove and not just nulls"); `scripts/make_demo_db.py` never got
+the same treatment, because the two files were updated in different PRs and
+nothing ties them together.
+
+Run 2 now finishes 4.25s after it starts, so the demo shows all three shapes the
+field distinguishes: a real measurement, the identical-timestamp era, and a run
+with no end to measure from. This is the third defect the README-verification
+step has found across five ship sequences — the other two were dead
+configuration and the `v0.8.0` version mismatch.
 
 ---
 

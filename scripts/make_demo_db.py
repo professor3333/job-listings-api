@@ -207,10 +207,16 @@ RUNS: list[dict] = [
         "pages_fetched": 1,
     },
     {
+        # The post-fix era: a real elapsed time, so `duration_seconds` has a
+        # positive case here and not only nulls. Run 1 keeps the identical
+        # timestamps Build 2 used to write and run 3 never finished, so the demo
+        # shows all three shapes the field has to tell apart. Without this row a
+        # stranger following the README sees `null` on every run and cannot tell
+        # a working field from a broken one.
         "id": 2,
         "source": "greenhouse:anthropic",
         "started_at": "2026-08-31T03:42:00+00:00",
-        "finished_at": "2026-08-31T03:42:00+00:00",
+        "finished_at": "2026-08-31T03:42:04.250000+00:00",
         "status": "ok",
         "rows_parsed": 2,
         "rules_version": 1,
@@ -219,7 +225,9 @@ RUNS: list[dict] = [
     },
     {
         # Still running, so finished_at is NULL — which is also what a run that
-        # died without writing it looks like. /sources reports this as-is.
+        # died without writing it looks like. /sources reports this as-is, and
+        # `duration_seconds` is null here for a third distinct reason: no end to
+        # measure from.
         "id": 3,
         "source": "python_org",
         "started_at": "2026-08-31T03:45:00+00:00",
