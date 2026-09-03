@@ -167,9 +167,9 @@ are Build 2's bookkeeping.
 | ----- | ---- | ---- | ------- |
 | `limit` | int | `1..100`. Out of range is **`422`, not clamped**. | `20` |
 | `offset` | int | `>= 0`. Past the end returns `200` with `items: []`. | `0` |
-| `q` | str | ≤ 200 chars. Substring of **title or company**, case-insensitive. `%` and `_` matched literally. | — |
+| `q` | str | 1–200 chars. Substring of **title or company**, case-insensitive. `%` and `_` matched literally. Empty is `422`. | — |
 | `source` | enum | One of the 8 known sources. | — |
-| `company` | str | ≤ 200 chars. **Prefix** match, case-insensitive. | — |
+| `company` | str | 1–200 chars. **Prefix** match, case-insensitive. Empty is `422`. | — |
 | `remote` | enum | `true` / `false` / `unknown`. | — |
 | `seniority` | enum | `intern`,`junior`,`senior`,`staff`,`lead`,`principal`,`head`,`director`. | — |
 | `salary_min_gte` | int | `>= 0`. Matches `salary_min >= value`. | — |
@@ -241,6 +241,27 @@ unfiltered results is a worse failure than an error, because the client believes
 it filtered. The cost is that a client sending parameters this version does not
 know about will break — an acceptable trade for a read-only service whose
 clients can regenerate from `/openapi.json`.
+
+### Decision: an empty text filter is `422`, not "no filter"
+
+**`?q=` and `?company=` return `422`.** Both are well-formed, both pass a
+max-length check, and both used to return `200` with the *unfiltered* list —
+the filter was dropped on the way to the SQL and nothing said so.
+
+That is the same failure as `?limt=5` in the decision above, arriving by a
+different route: a request that silently returns unfiltered results is worse
+than an error, because the client believes it filtered. Accepting empty-as-
+absent would have left this document arguing against the service's own
+behaviour one section later.
+
+A text filter must carry a term. Note the line this draws: it is *"is there a
+term"*, not *"is the term useful"* — `?q=%20` is a legal one-character search
+for a space and still returns `200`.
+
+**This is a behaviour change**, `200` → `422`, and it is made deliberately
+before `1.0`. A client sending an empty `q` was not getting a filtered result
+before and is not losing one now; it is being told that what it sent was never
+a search.
 
 ### Decision: `sort` is an allowlist, not a column name
 

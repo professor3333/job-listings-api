@@ -256,3 +256,49 @@ class TestUnknownParametersAreRefusedOnEveryListEndpoint:
         """
         assert Pagination.model_config["extra"] == "forbid"
         assert JobFilters.model_config["extra"] == "forbid"
+
+
+class TestEmptyTextFilters:
+    """An empty text filter is refused, not silently dropped.
+
+    Before `min_length=1` these returned 200 with the unfiltered list: the
+    parameter validated, the repository's truthiness test discarded it, and
+    nothing told the client its filter had not applied. That is the failure
+    `docs/api.md` already rejects for unknown parameters, reached by a
+    different route.
+    """
+
+    @pytest.mark.parametrize("field", ["q", "company"])
+    def test_empty_is_refused(self, client: TestClient, field: str) -> None:
+        response = client.get("/jobs", params={field: ""})
+        assert response.status_code == 422
+        body = response.json()
+        assert body["code"] == "VALIDATION_FAILED"
+        assert [e["field"] for e in body["errors"]] == [field]
+
+    @pytest.mark.parametrize("field", ["q", "company"])
+    def test_the_bound_is_published_not_merely_enforced(
+        self, client: TestClient, field: str
+    ) -> None:
+        """The counterpart to the `currency` finding.
+
+        There a `BeforeValidator` made Pydantic withdraw `pattern` from the
+        generated schema, so the rule was enforced and unpublished. These two
+        fields carry no validator, so `minLength` survives into
+        `/openapi.json` — a generated client can refuse an empty search
+        without asking the server.
+        """
+        spec = client.get("/openapi.json").json()
+        params = spec["paths"]["/jobs"]["get"]["parameters"]
+        schema = next(p["schema"] for p in params if p["name"] == field)
+        string_branch = next(b for b in schema["anyOf"] if b.get("type") == "string")
+        assert string_branch["minLength"] == 1
+
+    def test_a_whitespace_term_is_still_a_term(self, client: TestClient) -> None:
+        """The bound asks whether a term was sent, not whether it is useful.
+
+        `?q=%20` is a one-character search for a space. It is legal, it reaches
+        the SQL, and it matches whatever contains a space — unlike `?q=`, which
+        was never a search at all.
+        """
+        assert client.get("/jobs", params={"q": " "}).status_code == 200

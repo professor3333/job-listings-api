@@ -30,6 +30,16 @@ LIMIT_DEFAULT = 20
 Q_MAX_LENGTH = 200
 COMPANY_MAX_LENGTH = 200
 
+# A text filter must carry a term. `?q=` is well-formed, passes a max-length
+# check, and then means nothing — the repository drops an empty search and
+# returns the unfiltered list with a 200, so the client believes it searched.
+# That is the exact failure `api.md` already rejects for `?limt=5` under
+# "unknown query parameters are rejected": a request that silently returns
+# unfiltered results is worse than an error, because nothing tells the caller
+# its filter did not apply. Accepting empty-as-absent would leave the document
+# arguing against the service's own behaviour.
+TEXT_FILTER_MIN_LENGTH = 1
+
 
 # --------------------------------------------------------------------------
 # Allowlists
@@ -175,9 +185,15 @@ class JobFilters(Pagination):
     the rule, in one place.
     """
 
-    q: Annotated[str | None, Field(max_length=Q_MAX_LENGTH)] = None
+    q: Annotated[
+        str | None,
+        Field(min_length=TEXT_FILTER_MIN_LENGTH, max_length=Q_MAX_LENGTH),
+    ] = None
     source: Source | None = None
-    company: Annotated[str | None, Field(max_length=COMPANY_MAX_LENGTH)] = None
+    company: Annotated[
+        str | None,
+        Field(min_length=TEXT_FILTER_MIN_LENGTH, max_length=COMPANY_MAX_LENGTH),
+    ] = None
     remote: Remote | None = None
     seniority: Seniority | None = None
     salary_min_gte: Annotated[int | None, Field(ge=0)] = None

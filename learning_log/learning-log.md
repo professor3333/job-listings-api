@@ -272,6 +272,44 @@ The viva follows the entries, in Part 2.
   it returns rows. Recurred three times in this build — jobs, changes, runs —
   which is why it is written up rather than left in the gap log.
 
+## 2026-09-03 — A principle already written down does not enforce itself on the cases it governs
+
+- **What broke:** `?q=` and `?company=` returned `200` with the unfiltered list.
+  Validated, then dropped by a truthiness test in `_build_where`, with nothing in
+  the response to say the filter had not applied.
+- **Why it happens:** Two emptiness tests coexisted in one function — truthiness
+  for the two text filters, `is not None` for everything else — and no
+  `min_length` made an empty string illegal upstream. The truthiness test was
+  therefore answering a question the contract had never been asked: *is
+  empty-as-absent the same as absent?*
+- **What it teaches:** Three separable things.
+  1. **The decision belongs in the contract, not the query builder.** Once
+     `min_length=1` exists, the SQL builder has no choice to make. Fixing it in
+     `_build_where` would have made the code correct and left the *published
+     contract* still saying an empty `q` was legal.
+  2. **A written principle is not self-applying.** `api.md` had already decided
+     this exact trade for unknown parameters — "a typo silently returning
+     unfiltered results is worse than an error" — and the reasoning applied
+     verbatim. It was missed because the two cases do not resemble each other
+     from outside: an unknown parameter versus a known one with an empty value.
+     Auditing a document against its own principles is separate work from
+     writing it.
+  3. **The mirror image of the `currency` finding.** There a `BeforeValidator`
+     made Pydantic withdraw `pattern` from `/openapi.json`, leaving a rule
+     enforced but unpublished. These two fields carry no validator, so
+     `minLength: 1` survives into the generated schema and a client can enforce
+     it without asking the server. Same build, same file, opposite outcomes —
+     which is what makes "the docs are generated from the types" a claim with
+     conditions rather than a slogan.
+- **Where it was applied:** `TEXT_FILTER_MIN_LENGTH` and the two `Field`
+  declarations in `src/jobsapi/schemas.py`; a decision section and two table rows
+  in `docs/api.md`; `TestEmptyTextFilters` in `tests/test_hardening.py`, which
+  asserts the published schema as well as the refusal.
+- **How to detect it next time:** For every optional filter, ask what the *empty*
+  value means and whether the answer is written down. And when a document states
+  a principle, go looking for the other cases it already governs — the one that
+  prompted it is rarely the only one.
+
 ## 2026-09-03 — Read-only is where isolation has to be asked for, because nothing else asks
 
 - **What broke:** *Designed out, not observed.* Every paginated endpoint computed

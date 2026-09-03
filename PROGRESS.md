@@ -387,7 +387,7 @@ produced **five findings**, four of them fixed here.
 | 1 | `total` and `items` read in separate transactions; a scraper commit between them makes them disagree, silently in the dangerous direction. Also `/runs`, `/jobs/{id}/changes`, and `/stats` with six reads | Fixed — `read_snapshot` |
 | 2 | The skew *direction* depended on left-to-right keyword evaluation in one constructor call | Fixed — named locals, explicit order |
 | 3 | Nothing asserted `_SORT_COLUMNS` was total; a future `SortField` member would be a `KeyError` → 500 | Fixed — completeness test |
-| 4 | `?q=` and `?company=` validate, then are silently dropped by a truthiness test | Deferred to its own PR — it is a contract change |
+| 4 | `?q=` and `?company=` validate, then are silently dropped by a truthiness test | Fixed — `min_length=1`, shipped separately as a contract change |
 | 5 | `cache_size_kib` unbounded | Fixed — `ge=-1_048_576, le=-1` |
 
 **Finding 1 is the substantive one**, and it is the first finding in this build

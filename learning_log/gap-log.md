@@ -860,3 +860,50 @@ unreachable *today* because the map happens to be complete, and becomes a `500`
 the moment someone adds an enum member. There the completeness assertion is one
 line, `set(_SORT_COLUMNS) == set(SortField)`, and it converts a future live
 failure into a present test failure.
+
+### An empty text filter becomes a 422 — 2026-09-03
+
+**Q1. Why does this fix belong in `schemas.py` rather than in `_build_where`,
+given the bug is visible in `_build_where`?**
+
+Because the question is what the API *accepts*, not what the SQL builder does
+with what it accepted. Changing the truthiness test to `is not None` would have
+made the service apply `LIKE '%%'` for an empty term — a different answer, still
+chosen unilaterally, and still not written anywhere. The contract is the only
+place where "an empty search is not a search" can be *stated* rather than
+implemented, and stating it is what puts `minLength: 1` into `/openapi.json`
+where a generated client can enforce it.
+
+The general form: when a value's legality is in question, the fix goes where
+legality is declared. A repair in the consumer leaves the published contract
+still permitting the thing.
+
+**Q2. `docs/api.md` already contained the reasoning for this decision. Why did
+it not prevent the defect?**
+
+Because principles do not apply themselves. The document rejects unknown
+parameters on the grounds that a request silently returning unfiltered results
+is worse than an error, since the client believes it filtered. `?q=` is that
+sentence exactly — but the two cases look nothing alike from outside: one is a
+parameter the service has never heard of, the other a parameter it knows well
+carrying an empty value. The shared structure is only visible once both are
+described in terms of *what the client is led to believe*.
+
+So auditing a document against its own principles is separate work from writing
+it, and it is the work that finds this class of bug.
+
+**Q3. `currency` was enforced but unpublished; `minLength` here is enforced *and*
+published. What is the actual rule?**
+
+Pydantic publishes a constraint only while it can still guarantee the constraint
+describes what arrives on the wire. `currency` carries a `BeforeValidator` that
+uppercases, so `pattern` no longer describes the input and Pydantic withdraws it.
+`q` and `company` carry no validator, so nothing intervenes between the wire
+value and the check, and `minLength` survives into the schema.
+
+The rule is therefore not "constraints are published" but "constraints are
+published where no transform precedes them". Which means the *thesis* of this
+build — the docs are generated from the types — holds with a condition attached,
+and the condition is invisible from the document. That is why the test asserts
+the published schema and not only the status code: the two can disagree, and this
+build has already shipped one release where they did.
