@@ -950,3 +950,59 @@ unfalsifiable: it cannot be reproduced, and it cannot be compared.
 The same failure shape as the version check that this build already paid for:
 `v0.8.0` was internally consistent and wrong, and only an external reading of the
 artefact could tell. Here too, the artefact had to be asked directly.
+
+### Re-derivation session — `routers/jobs.py` — 2026-09-03
+
+**Q1. `GET /jobs` and `GET /jobs/{job_id}` read the same table and return
+different shapes. Why two response models rather than one with `description`
+optional?**
+
+Three reasons, and the first is about this dataset rather than design taste.
+`description` is NULL in **0.76%** of rows, so `null` already means "the scraper
+recorded no description". In a merged model, `null` on a list item would mean
+"not sent" and `null` on a detail response would mean "not recorded" — identical
+JSON, no way for a client to tell them apart. The sentinel is taken.
+
+Second, one model plus `response_model_exclude` makes the omission a per-route
+flag that a refactor can drop, and nothing fails when it does; the response just
+gets heavier. Two models make it structurally unavailable — `JobSummary` has no
+field to put it in. Third, `/openapi.json` would advertise one schema for both, so
+a generated client gets a `description` attribute that is permanently `None` on
+list items and `/docs` cannot say which endpoint populates it.
+
+**Q2. `response_model` keeps `description` out of a list response. What does it
+actually save, and what does it not?**
+
+Only the serialisation and the wire. The disk read and the Python objects are
+avoided one layer down, by `_SUMMARY_COLUMNS` not selecting the column. If the
+repository selected `description` and the model dropped it, the service would
+have paid to read **21.7 MB** off disk, build the strings and hand them to
+Pydantic purely to discard them.
+
+The model is the guarantee; the query is the saving; they are not substitutes.
+`list_job_changes` makes the same argument in the other direction — it truncates
+with `substr()` in SQL rather than in the response model, for exactly this reason.
+
+At runtime `response_model` does two things at two different times: at startup it
+supplies the route's 200 schema for `/openapi.json`, and per request it
+*validates* the returned value into the model, drops undeclared fields, then
+dumps. Not a serialisation step — a validation step. A value that does not fit
+raises `ResponseValidationError` → 500, which is the right code: the server broke
+its own published contract. On a 100-item page that is 100 model constructions
+and ~1,200 field validations.
+
+**Q3. A future `/jobs/recent` declared below `/jobs/{job_id}` is swallowed. What
+does the client actually see, and why can the generated docs not help?**
+
+A **422 naming `job_id`** — a parameter the client never sent — on a path that
+`/docs` lists. The parameterised route matches first (Starlette takes the first
+full match in declaration order, with no specificity ranking), `"recent"` is
+validated against `int ≥ 1`, and validation fails before the handler runs.
+
+`/docs` cannot help because both routes are registered: the schema is correct
+about what exists and says nothing about which one answers. An ordering bug is
+invisible to a document generated from types.
+
+Worth recording that the `int` annotation is what makes this loud. Typed `str`,
+the same shadowing returns a 404 for a job named "recent", or a 200 of the wrong
+shape — a silent mis-route. The typed path parameter earns its place twice.

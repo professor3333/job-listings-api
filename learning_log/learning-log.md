@@ -272,6 +272,70 @@ The viva follows the entries, in Part 2.
   it returns rows. Recurred three times in this build — jobs, changes, runs —
   which is why it is written up rather than left in the gap log.
 
+## 2026-09-03 — Route shadowing is decided by position, and the client is told about a parameter it never sent
+
+- **What broke:** *Designed out, not observed.* `/jobs/{job_id}` is declared
+  before `/jobs/{job_id}/changes`, which is safe — but a future `/jobs/recent`
+  declared after it would be swallowed whole, and the symptom is not a 404. The
+  request matches the parameterised route, `"recent"` is validated against
+  `int ≥ 1`, and the client receives **422 naming `job_id`** — a parameter it
+  never sent, on a path `/docs` plainly lists.
+- **Why it happens:** Starlette iterates routes in **declaration order** and takes
+  the first full match. There is no specificity ranking, so shadowing is decided
+  by position rather than by shape. Two routes can collide only if they can match
+  the same concrete path *and* accept the same method; with the default converter
+  a `{param}` segment never spans a `/`, so equal segment count is the first-order
+  filter, and given that they collide iff at every position the segments are
+  identical literals or at least one is a parameter.
+- **What it teaches:** Four separable things.
+  1. **"Literals before parameters" is too vague to predict collisions.** The
+     usable rule is the segment-count one above. It is what makes the current file
+     safe: `/jobs/{job_id}` is 2 segments and `/jobs/{job_id}/changes` is 3, so
+     `{job_id}` cannot match `999999/changes` and the order between them is free.
+  2. **The collision is over (path-set × method) pairs, not paths.** A path match
+     with a method mismatch is a *partial* match in Starlette: the router keeps
+     scanning for a full match and falls back to the partial only to produce a
+     405. So `GET /jobs/{job_id}` would not shadow a `POST /jobs/recent`.
+  3. **The shadowing is asymmetric.** `/jobs/recent` declared first shadows
+     nothing, because it matches exactly one string. `/jobs/{job_id}` declared
+     first shadows it completely.
+  4. **The `int` type is what makes the failure loud.** Typed `str`, a shadowed
+     `/jobs/recent` would return a 404 for a job named "recent", or a 200 of
+     entirely the wrong shape. The typed path parameter earns its place twice: the
+     hardening table's reason (`/jobs/abc` is 422, not 500) and this one.
+- **Where it was applied:** the declaration-order comments in
+  `src/jobsapi/routers/jobs.py`. The generated documentation cannot help here —
+  both routes are registered, so `/docs` is correct about existence and silent
+  about behaviour. A schema cannot show an ordering bug.
+- **How to detect it next time:** The signature is a **validation error about a
+  path parameter the client did not supply**. If a request to a path that plainly
+  exists returns a 422 naming someone else's parameter, look at declaration order
+  before looking at the handler.
+
+## 2026-09-03 — The same snapshot figure, dated in one document and undated in another
+
+- **What broke:** `description` was quoted as "average 5.7 KB" in both
+  `docs/design.md` and `docs/api.md`. Measured today it is **5.3 KB** across 4,224
+  rows — the dataset grew from 3,105 at Phase 0, and the mean moved with it.
+- **Why it happens:** `design.md` states at the top that its figures are a Phase 0
+  snapshot, taken 2026-09-01, deliberately left as measured because the decisions
+  they justify were made against them. That is correct and needs no fixing.
+  `api.md` repeated the same number with no date, in a document that describes the
+  service *as it is now* — so a snapshot was reading as a current fact.
+- **What it teaches:** A figure's correctness depends on the claim its document is
+  making. The identical number is accurate in a decision record ("this is what we
+  measured, and it is why we chose X") and stale in a contract ("this is what the
+  API does"). Copying a value between documents silently changes the claim
+  attached to it. The same failure shape as the image size, one register up: a
+  number without its provenance cannot be checked, and here the provenance is not
+  a command but a date and a purpose.
+- **Where it was applied:** `docs/api.md` now carries the current measurement with
+  the date it was taken and a note that the Phase 0 figure differed and the
+  argument is unchanged. `docs/design.md` is left exactly as it was.
+- **How to detect it next time:** When the same measured value appears in two
+  documents, check whether both are making the same kind of claim about it. If one
+  is a decision record and the other is a contract, they need different upkeep.
+
 ## 2026-09-03 — A number recorded without its command is not a measurement
 
 - **What broke:** A container image measured `266 MB` on 2026-09-02 and `58.7 MB`
