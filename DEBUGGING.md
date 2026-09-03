@@ -12,6 +12,46 @@ Significant failures only. Newest entry at the top.
 
 ---
 
+## 2026-09-03 — a history purge rewrote 71 commits when only 4 needed it
+
+- **Problem:** `CLAUDE.md` was tracked, pushed to a public repo, then untracked
+  and purged from history with `git filter-repo --invert-paths --path
+  CLAUDE.md`. The purge worked, but every commit SHA in the repository changed
+  — including commits from days before the file existed. All six release tags
+  ended up pointing at commits no longer reachable from `main`, and every SHA
+  cited in `PROGRESS.md` (`cf6594b`, `7834b6d`, …) was orphaned. Separately,
+  the local working copy of `CLAUDE.md` was deleted from disk during the
+  untracking, and had to be restored from history.
+- **Root cause:** two independent mistakes.
+  (1) **The cascade.** GitHub signs the merge commits it creates, and
+  `filter-repo` strips `gpgsig` unconditionally — a rewritten commit cannot
+  carry a signature that was computed over different bytes. Stripping it
+  changes the commit object, which changes its SHA, which changes every
+  descendant. The trees were byte-identical (`ceddeae…` before and after); only
+  the signature differed. So the rewrite propagated from the *earliest signed
+  commit* rather than from the commit that introduced the file.
+  (2) **The deletion.** `git rm --cached` correctly left the file on disk, but
+  it did so *on the branch*. `main` still had the path tracked, so pulling the
+  merge that deleted it removed the working-tree copy as well — the flag
+  protects the branch you run it on, not the one you switch back to.
+- **Solution:** restored the original history from a pre-purge `git bundle`
+  (the objects were also still in the local store, unreferenced but not yet
+  collected), then re-ran the rewrite scoped with `--refs a4593e1..main
+  --partial` so only the four commits from the file's introduction onward were
+  touched. Verified before pushing: `git merge-base --is-ancestor` for every
+  documented SHA, all six tags byte-compared against `git ls-remote`, and
+  `gpgsig` still present on the older merges. The local file was restored with
+  `git show af3bd18:CLAUDE.md`, hash-checked against a backup taken first.
+- **Lesson:** a history rewrite has a blast radius, and the radius is not "the
+  commits containing the file" — it is "every commit whose bytes change, and
+  all their descendants". Signatures make that set far larger than it looks.
+  Scope the rewrite with `--refs <first-bad-commit>~1..<branch>` and verify the
+  boundary held before force-pushing, because the check is cheap and the
+  force-push is the least reversible operation in Git. Take the bundle first:
+  it is what made this recoverable. And the purge does not finish at the
+  remote — GitHub keeps unreachable objects and `refs/pull/N/head` alive, so
+  the blob stays fetchable by SHA until Support drops the refs.
+
 ## 2026-09-03 — `?q=` validated, then vanished, and the client was told it had searched
 
 - **Problem:** `GET /jobs?q=` returned `200` with the complete unfiltered list.
