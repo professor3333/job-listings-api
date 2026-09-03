@@ -12,6 +12,31 @@ Significant failures only. Newest entry at the top.
 
 ---
 
+## 2026-09-03 — `?q=` validated, then vanished, and the client was told it had searched
+
+- **Problem:** `GET /jobs?q=` returned `200` with the complete unfiltered list.
+  The parameter was well-formed, passed its max-length check, and was then
+  discarded on the way to the SQL. Same for `?company=`. Nothing in the response
+  distinguished "your search matched everything" from "your search was never
+  applied", so a client that sent an empty term believed it had filtered.
+- **Root cause:** `_build_where` tests `if filters.q:` — truthiness — while every
+  other filter tests `is not None`. Two different emptiness tests coexisted in one
+  function and the difference was invisible. Neither field declared a
+  `min_length`, so an empty string was legal input, and the truthiness test then
+  silently chose one of two possible answers on the client's behalf.
+- **Solution:** `min_length=1` on `q` and `company` in `src/jobsapi/schemas.py`,
+  so the refusal happens in the contract rather than being papered over in the
+  SQL builder, and a row in `docs/api.md`. The repository's truthiness test is
+  kept and commented: it is now unreachable, and it is the safer residue if the
+  bound is ever removed.
+- **Lesson:** `docs/api.md` had already decided this case under a different name —
+  "a typo like `?limt=5` silently returning unfiltered results is a worse failure
+  than an error". The reasoning applied verbatim and nobody noticed it applied,
+  because the two failures do not look alike from the outside: one is an unknown
+  parameter, the other a known parameter with an empty value. When a document
+  states a *principle*, the work is finding every case it governs — not only the
+  case that prompted writing it down.
+
 ## 2026-09-03 — `total` and `items` were answers to two different questions
 
 - **Problem:** *Found by derivation, never observed.* `GET /jobs` issued the page

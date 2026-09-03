@@ -86,6 +86,15 @@ def _build_where(filters: JobFilters) -> tuple[str, list[object]]:
     clauses: list[str] = []
     params: list[object] = []
 
+    # `if filters.q:` rather than `is not None`, and the difference is now
+    # unreachable rather than merely subtle: `min_length=1` in `schemas.py` means
+    # an empty string never arrives. It is kept as the safer residue if that
+    # bound were ever removed — dropping the filter returns a visible superset,
+    # where `LIKE '%'` on a *nullable* column would silently exclude the NULL
+    # rows instead. That distinction does not bite on `title` or `company`, which
+    # are `NOT NULL` in Build 2's schema — but this service verifies column
+    # *presence* only, never nullability, so the equivalence is contingent on an
+    # upstream constraint it does not enforce and would not notice losing.
     if filters.q:
         pattern = f"%{_escape_like(filters.q)}%"
         clauses.append(
