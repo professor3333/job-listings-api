@@ -291,6 +291,21 @@ All eleven met.
   Overrule if you'd rather it moved. The same reasoning is why `v0.8.0` *was*
   cut: PR #14 added a response field, which a client can observe, so it needed
   a version to name. Docs move the tip; contract changes move the tag.
+- **A whitespace-only text filter is legal and nearly unfiltered.** `?q=%20`
+  is a one-character search for a space: `min_length=1` does not touch it, so it
+  reaches the SQL as `LIKE '% %'` and matches almost every row. Left as-is
+  deliberately, and the line is stated in `docs/api.md` — the bound asks *"is
+  there a term"*, not *"is the term useful"*. Fixing it needs a stripping
+  `BeforeValidator`, which re-creates the `v0.8.1` `currency` failure (Pydantic
+  withdraws `minLength` from `/openapi.json`) and would then need the
+  `json_schema_extra` remedy on top. A test pins the case at `200` so the choice
+  stays visible rather than becoming an accident.
+- **The application database's list endpoints read a count and a page
+  separately**, the same shape `read_snapshot` fixed for `jobs.db`. Not folded
+  into that change: this process is the app database's only writer and it is
+  WAL, so the external-writer mechanism does not apply, and wrapping reads there
+  interleaves with the write path's implicit transactions. Recorded in
+  `docs/design.md` under the Decision 1 addendum.
 - **The `source` enum is coupled to Build 2's data.** If the scraper adds a
   source, this service rejects it with a 422 until `SOURCE_VALUES` is updated.
   A loud, documented failure rather than a filter that silently matches
@@ -422,8 +437,8 @@ concept behind each recorded in the implementation register in
 `learning_log/learning-log.md` — the register is closed.
 
 This table is the other half: the list to rebuild unaided, which is a different
-test from having read the explanation. Two rows are marked, one of them only
-partially — ◧ means part of the file was re-derived and the rest was not.
+test from having read the explanation. ◧ means part of the file was re-derived
+and the rest was not.
 
 | File | Written | Re-derived unaided |
 |------|---------|--------------------|
@@ -439,7 +454,7 @@ partially — ◧ means part of the file was re-derived and the rest was not.
 | `src/jobsapi/problems.py` | 2026-09-01 | ⬜ |
 | `src/jobsapi/schemas.py` | 2026-09-01 | ◧ 2026-09-02 — `Pagination` only; the response models were not |
 | `src/jobsapi/schemas.py` (Phase 3) | 2026-09-01 | ✅ 2026-09-02 |
-| `src/jobsapi/repository.py` | 2026-09-01 | ◧ 2026-09-03 — the two-query envelope; `get_job`'s domain-error contract was not |
+| `src/jobsapi/repository.py` | 2026-09-01 | ✅ 2026-09-03 |
 | `src/jobsapi/repository.py` (Phase 3) | 2026-09-01 | ✅ 2026-09-03 |
 | `src/jobsapi/repository.py` (Phase 5) | 2026-09-01 | ⬜ |
 | `src/jobsapi/logging_config.py` | 2026-09-01 | ⬜ |
