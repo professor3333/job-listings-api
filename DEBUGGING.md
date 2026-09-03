@@ -12,6 +12,33 @@ Significant failures only. Newest entry at the top.
 
 ---
 
+## 2026-09-03 — `total` and `items` were answers to two different questions
+
+- **Problem:** *Found by derivation, never observed.* `GET /jobs` issued the page
+  query and the count query as two independent statements. Under a concurrent
+  scraper commit the response could report a `total` counted from a different
+  state of the database than `items` was drawn from. `/runs` and
+  `/jobs/{id}/changes` had the same pair; `/stats` had six independent reads.
+  Nothing raises, no status code changes, and the dangerous direction is silent:
+  a `total` that is too low makes a client stop paginating early and drop rows.
+- **Root cause:** Python's `sqlite3` opens implicit transactions before DML only
+  (`INSERT`/`UPDATE`/`DELETE`/`REPLACE`). A sequence of `SELECT`s therefore runs
+  in autocommit, each statement taking and releasing its own `SHARED` lock. The
+  assumption that "read-only means no transaction to think about" is exactly
+  backwards — read-only is where isolation has to be asked for explicitly,
+  because nothing else will ask for it.
+- **Solution:** `read_snapshot` in `src/jobsapi/db.py` — a deferred `BEGIN` held
+  across the statements that must agree, applied in `repository.jobs_page`,
+  `runs_page`, `job_changes_page` and `stats`. Deferred is not a preference:
+  `BEGIN IMMEDIATE` asks for a write lock, which `mode=ro` plus `PRAGMA
+  query_only = 1` refuses. Reasoned in `docs/design.md` as an addendum to
+  Decision 1, where the locking trade was first argued.
+- **Lesson:** A transaction boundary is part of a query's meaning, not an
+  implementation detail of writing. Whenever two reads are combined into one
+  answer, ask what happens if the database changes between them — and note that
+  a fixture database with no concurrent writer can never fail this test, which
+  is why a green suite was not evidence.
+
 ## 2026-09-02 — A validator withdrew a constraint from the published schema
 
 - **Problem:** `/jobs?currency=dollars` returned a correct `422`, but

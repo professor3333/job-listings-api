@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from jobsapi.db import read_snapshot
 from jobsapi.errors import JobNotFound
 from jobsapi.schemas import (
     CHANGE_VALUE_MAX_LENGTH,
@@ -162,6 +163,25 @@ def _build_order(filters: JobFilters) -> str:
     differently between two queries, so LIMIT/OFFSET paging would repeat some
     rows and skip others with no error anywhere. Appending the primary key makes
     the ordering total.
+
+    Two things about it that are easy to `simplify` away, recorded because the
+    code cannot say them on its own:
+
+    *It is not a last resort.* Under `sort=salary_min` roughly 70% of rows tie on
+    NULL, so for most of the result set the tie-break **is** the ordering, not a
+    rare disambiguation.
+
+    *The matching direction is deliberate.* Correctness needs only that the
+    tie-break be unique and non-null — `company ASC, id DESC` paginates perfectly
+    well. Matching the directions buys a future option instead: the standard cure
+    for deep-OFFSET scans is keyset pagination, `WHERE (company, id) > (?, ?)`,
+    and a row-value comparison is only expressible when every key sorts the same
+    way. Mixed directions have to be decomposed by hand.
+
+    The property doing the correctness work is `id` being unique and non-null,
+    which holds because it is declared `INTEGER PRIMARY KEY` — a rowid alias. A
+    plain `PRIMARY KEY` column in SQLite can contain NULLs, so the guarantee
+    comes from the column type, not from the words "primary key".
     """
     column = _SORT_COLUMNS[filters.sort]
     direction = "DESC" if filters.order is SortOrder.desc else "ASC"
@@ -191,6 +211,30 @@ def list_jobs(conn: sqlite3.Connection, filters: JobFilters) -> list[sqlite3.Row
         LIMIT ? OFFSET ?
     """
     return conn.execute(sql, [*params, filters.limit, filters.offset]).fetchall()
+
+
+def jobs_page(
+    conn: sqlite3.Connection, filters: JobFilters
+) -> tuple[list[sqlite3.Row], int]:
+    """One page and its total, read from a single consistent snapshot.
+
+    The two queries are wrapped together because the envelope promises they are
+    answers to the same question. Counted separately, a scraper commit between
+    them makes `total` describe a different set than `items` was drawn from —
+    and the client-visible symptom of the dangerous direction is nothing at all:
+    paging stops early and rows are silently missed.
+
+    The order inside the snapshot is load-bearing if the snapshot ever goes
+    away. Page first, count second, so any residual skew makes `total` too
+    *high* — a phantom empty page a client can see — rather than too low, which
+    loses rows in silence. Named locals rather than two calls inside a
+    constructor: relying on left-to-right argument evaluation for a semantic
+    property is an invariant nothing states and any tidying refactor can flip.
+    """
+    with read_snapshot(conn):
+        rows = list_jobs(conn, filters)
+        total = count_jobs(conn, filters)
+    return rows, total
 
 
 def get_job(conn: sqlite3.Connection, job_id: int) -> sqlite3.Row:
@@ -271,6 +315,28 @@ def list_job_changes(
     ).fetchall()
 
 
+def job_changes_page(
+    conn: sqlite3.Connection, job_id: int, limit: int, offset: int
+) -> tuple[list[sqlite3.Row], int]:
+    """Existence, page and total for one job's history, in one snapshot.
+
+    The existence check joins the transaction rather than preceding it. Outside
+    it, a job could vanish between "does this exist" and "count its changes",
+    turning a 404 into a 200 with a total of zero — the exact collapse of the
+    two facts this endpoint exists to keep apart.
+
+    Raising `JobNotFound` here rather than returning a sentinel keeps the router
+    free of the choice: the repository states a domain fact and the problem
+    handler decides it is a 404.
+    """
+    with read_snapshot(conn):
+        if not job_exists(conn, job_id):
+            raise JobNotFound(job_id)
+        rows = list_job_changes(conn, job_id, limit=limit, offset=offset)
+        total = count_job_changes(conn, job_id)
+    return rows, total
+
+
 # --------------------------------------------------------------------------
 # Runs and sources
 # --------------------------------------------------------------------------
@@ -300,6 +366,20 @@ def list_runs(conn: sqlite3.Connection, limit: int, offset: int) -> list[sqlite3
         """,
         (limit, offset),
     ).fetchall()
+
+
+def runs_page(
+    conn: sqlite3.Connection, limit: int, offset: int
+) -> tuple[list[sqlite3.Row], int]:
+    """Run history and its total, from one snapshot. Same reasoning as `jobs_page`.
+
+    `/runs` is the endpoint most likely to be read *while* the writer is active,
+    since a client watching run history is watching the thing that writes.
+    """
+    with read_snapshot(conn):
+        rows = list_runs(conn, limit=limit, offset=offset)
+        total = count_runs(conn)
+    return rows, total
 
 
 def list_sources(conn: sqlite3.Connection) -> list[sqlite3.Row]:
@@ -355,54 +435,62 @@ def stats(conn: sqlite3.Connection) -> dict[str, object]:
     The coverage counts are built as a single SELECT with one SUM per field
     rather than one query per field: nine round trips over 3,105 rows would be
     nine full scans to answer one question.
+
+    Six statements, so the same snapshot rule as the paginated endpoints applies
+    with more force here than anywhere else: `total_jobs`, `total_runs`,
+    `total_changes` and `sources` are four separate reads, and without a shared
+    view a single response can report counts taken from four different states of
+    the database. A `/stats` body that does not internally add up is exactly the
+    kind of wrong that no client can detect.
     """
-    sums = ", ".join(
-        f"SUM(CASE WHEN {field} IS NULL THEN 0 ELSE 1 END) AS {field}"
-        for field in _COVERAGE_FIELDS
-    )
-    row = conn.execute(f"SELECT COUNT(*) AS total, {sums} FROM jobs").fetchone()
-    total = int(row["total"])
+    with read_snapshot(conn):
+        sums = ", ".join(
+            f"SUM(CASE WHEN {field} IS NULL THEN 0 ELSE 1 END) AS {field}"
+            for field in _COVERAGE_FIELDS
+        )
+        row = conn.execute(f"SELECT COUNT(*) AS total, {sums} FROM jobs").fetchone()
+        total = int(row["total"])
 
-    coverage = [
-        {
-            "field": field,
-            "present": int(row[field] or 0),
-            "missing": total - int(row[field] or 0),
-            "coverage": (int(row[field] or 0) / total) if total else 0.0,
+        coverage = [
+            {
+                "field": field,
+                "present": int(row[field] or 0),
+                "missing": total - int(row[field] or 0),
+                "coverage": (int(row[field] or 0) / total) if total else 0.0,
+            }
+            for field in _COVERAGE_FIELDS
+        ]
+
+        remote = conn.execute(
+            """
+            SELECT
+                SUM(CASE WHEN remote = 1 THEN 1 ELSE 0 END)    AS yes,
+                SUM(CASE WHEN remote = 0 THEN 1 ELSE 0 END)    AS no,
+                SUM(CASE WHEN remote IS NULL THEN 1 ELSE 0 END) AS unknown
+            FROM jobs
+            """
+        ).fetchone()
+
+        dates = conn.execute(
+            "SELECT MIN(posted_at) AS earliest, MAX(posted_at) AS latest FROM jobs"
+        ).fetchone()
+
+        return {
+            "total_jobs": total,
+            "total_runs": count_runs(conn),
+            "total_changes": int(
+                conn.execute("SELECT COUNT(*) FROM job_changes").fetchone()[0]
+            ),
+            "sources": int(
+                conn.execute("SELECT COUNT(DISTINCT source) FROM jobs").fetchone()[0]
+            ),
+            "coverage": coverage,
+            "remote_true": int(remote["yes"] or 0),
+            "remote_false": int(remote["no"] or 0),
+            "remote_unknown": int(remote["unknown"] or 0),
+            "earliest_posted_at": dates["earliest"],
+            "latest_posted_at": dates["latest"],
         }
-        for field in _COVERAGE_FIELDS
-    ]
-
-    remote = conn.execute(
-        """
-        SELECT
-            SUM(CASE WHEN remote = 1 THEN 1 ELSE 0 END)    AS yes,
-            SUM(CASE WHEN remote = 0 THEN 1 ELSE 0 END)    AS no,
-            SUM(CASE WHEN remote IS NULL THEN 1 ELSE 0 END) AS unknown
-        FROM jobs
-        """
-    ).fetchone()
-
-    dates = conn.execute(
-        "SELECT MIN(posted_at) AS earliest, MAX(posted_at) AS latest FROM jobs"
-    ).fetchone()
-
-    return {
-        "total_jobs": total,
-        "total_runs": count_runs(conn),
-        "total_changes": int(
-            conn.execute("SELECT COUNT(*) FROM job_changes").fetchone()[0]
-        ),
-        "sources": int(
-            conn.execute("SELECT COUNT(DISTINCT source) FROM jobs").fetchone()[0]
-        ),
-        "coverage": coverage,
-        "remote_true": int(remote["yes"] or 0),
-        "remote_false": int(remote["no"] or 0),
-        "remote_unknown": int(remote["unknown"] or 0),
-        "earliest_posted_at": dates["earliest"],
-        "latest_posted_at": dates["latest"],
-    }
 
 
 def get_jobs_by_ids(

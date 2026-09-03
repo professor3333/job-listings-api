@@ -189,6 +189,7 @@ list only once it has been written up in `learning-log.md`.
 | 2026-09-01 | `docs/design.md` | Both Phase 0 decisions and the measurements behind them: `mode=ro` + path-not-policy config, and why WAL is *declined* rather than deferred | ☑ |
 | 2026-09-01 | `src/jobsapi/main.py` | Why an app *factory* rather than a module-level singleton, and what `include_router` does that the `@router.get` decorator did not | ☑ |
 | 2026-09-01 | `src/jobsapi/routers/meta.py` | Why `/health` is `async def` while every sqlite3 endpoint must be plain `def` — the rule is about what the body does, not house style | ☑ |
+| 2026-09-03 | `tests/test_snapshot.py` | Why a snapshot must be asserted through its *mechanism* (`conn.in_transaction` during the second read) rather than its symptom — a fixture database has no concurrent writer, so the skew it prevents is unreachable in tests by construction | ☑ |
 | 2026-09-01 | `tests/test_health.py` | Why `TestClient` is used as a context manager (lifespan events), and why the OpenAPI schema is asserted on rather than trusted | ☑ |
 | 2026-09-01 | `.github/workflows/ci.yml` | What `uv sync --locked` refuses to do, and why CI having no network and no `jobs.db` is the point rather than a limitation | ☑ |
 | 2026-09-01 | `src/jobsapi/config.py` | Why the DB location is a *path, not a policy*, and why `get_settings` is cached but tests never call it | ☑ |
@@ -804,3 +805,58 @@ at exactly the point where the type system stopped being able to speak.
 That is the sharpest available answer to the viva question *"what does it mean
 when the docs are wrong?"* — here they were not wrong, they were **incomplete**,
 which is worse, because incompleteness is not visible from the document itself.
+
+### Read consistency and the sort-map completeness gap — 2026-09-03
+
+**Q1. `jobs.db` is opened `mode=ro` with `PRAGMA query_only = 1`. Why does a
+connection that cannot possibly write still need a transaction?**
+
+Because a transaction does two separable jobs — making writes atomic, and fixing
+what a reader sees — and only the first is irrelevant here. `mode=ro` constrains
+what this connection may *do*; it says nothing about what it *sees* between two
+statements. Python's `sqlite3` opens implicit transactions before DML only, so a
+sequence of `SELECT`s runs in autocommit with one `SHARED` lock per statement,
+taken and released. Two reads are therefore two views, and a scraper commit in
+the gap makes them disagree.
+
+The inversion is the thing to keep: read-only is not the case where you can stop
+thinking about transactions, it is the case where nothing will start one for you.
+A write path gets an implicit transaction whether or not the author thought about
+it; a read path gets nothing unless it asks.
+
+**Q2. Why is the snapshot a deferred `BEGIN` rather than `BEGIN IMMEDIATE`, and
+what does the answer cost?**
+
+`BEGIN IMMEDIATE` acquires a `RESERVED` lock — a write lock — immediately. This
+connection is `mode=ro` with `query_only` on, so SQLite refuses it. Deferred is
+the only form available, and it happens to be sufficient: in rollback-journal
+mode a read transaction holds `SHARED` from the first read until the end, and
+`SHARED` is what an `EXCLUSIVE` commit cannot coexist with.
+
+The cost is that this service can now delay Build 2's commit for the span of two
+queries instead of one. That is a widening of an existing window, not a new
+hazard — each statement already held `SHARED` on its own. The reason the cost
+cannot be avoided traces to Decision 1: WAL is the journal mode where readers
+snapshot without blocking writers, and WAL was declined so the container could
+mount the data directory read-only. The bill for that decision arrived here.
+
+**Q3. The suite was green before this change and green after. What could the
+tests have caught, and what could they never have caught?**
+
+They could never have caught the defect. `conftest.py` builds a temporary
+database with no concurrent writer, so the interleaving that produces the skew
+cannot occur — the failing case is unreachable by construction, not merely
+untested. No amount of assertion on response bodies would have found it.
+
+What is testable is the *mechanism*: that the count runs while
+`conn.in_transaction` is true, that the transaction is released afterwards, that
+it is released even when the body raises, and that `BEGIN IMMEDIATE` is genuinely
+refused on this connection so the deferred form is documented as forced rather
+than preferred. That is the general move — when the symptom is unreachable in the
+test environment, assert the property that prevents it instead.
+
+The same session found the mirror-image case in `_SORT_COLUMNS`: a defect that is
+unreachable *today* because the map happens to be complete, and becomes a `500`
+the moment someone adds an enum member. There the completeness assertion is one
+line, `set(_SORT_COLUMNS) == set(SortField)`, and it converts a future live
+failure into a present test failure.

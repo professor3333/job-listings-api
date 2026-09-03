@@ -180,6 +180,58 @@ goes to a separate database this service owns.
 > same setting is right in one place and wrong in the other, which is why "use
 > WAL" is not advice.
 
+> **Addendum, 2026-09-03 — the second entry in this ledger: read consistency.**
+> The section above reasons about whether this service can *get* a lock. It did
+> not ask how many separate read transactions one request takes. The answer was
+> "as many as it issues statements": Python's `sqlite3` opens implicit
+> transactions before DML only, so a sequence of `SELECT`s runs in autocommit
+> and each takes and releases its own `SHARED` lock. `GET /jobs` is two such
+> reads — the page and the count — and `GET /stats` is six.
+>
+> A scraper commit landing between them yields two individually-correct,
+> mutually inconsistent answers. The failure has no signal: a `total` that is
+> too low makes a client stop paginating early and drop rows, with no error and
+> no empty page. `api.md` §6 justifies the list envelope on the grounds that a
+> bare array has nowhere to put `total`; a `total` that can disagree with
+> `items` undermines the reason the shape was chosen.
+>
+> **Decision: take the transaction, accept the contention.** Reads that must
+> agree are wrapped in `db.read_snapshot` — `/jobs`, `/runs`,
+> `/jobs/{job_id}/changes` and `/stats`.
+>
+> *The lock cost is smaller than it first appears.* Each statement already takes
+> `SHARED` for its own duration, so this service could already delay a commit;
+> the snapshot does not create that hazard, it widens the window by the gap
+> between two statements, and that gap is in-process Python assembling a
+> parameter list — no I/O, no network. Set against the sizing above (1–34 runs a
+> day, a complete batch running 32 seconds wall clock, and only the commits
+> taking `EXCLUSIVE`), the marginal exposure is sub-millisecond against queries
+> that are themselves milliseconds.
+>
+> *The failure modes are asymmetric.* Losing the race produces `SQLITE_BUSY` →
+> `503` with `Retry-After` — a path that already exists, is already classified
+> by `sqlite_errorname`, is already documented and already tested. Decision 2 is
+> an argument that loud and documented beats quiet and plausible; keeping a
+> silent inconsistency to avoid a loud handled failure would contradict it.
+>
+> *`BEGIN` is deferred, and that is forced.* `BEGIN IMMEDIATE` asks for a write
+> lock, which `mode=ro` plus `PRAGMA query_only = 1` refuses. Deferred is also
+> sufficient: in rollback-journal mode a read transaction holds `SHARED` from
+> the first read until the end, which is what excludes the writer.
+>
+> *And the trade itself traces back to the WAL decision above.* WAL is the mode
+> where a consistent read costs the writer nothing — readers snapshot without
+> blocking. WAL is exactly what was given up to keep the bind mount read-only.
+> So the choice here is not free-standing: consistent-and-blocking, or
+> skewed-and-documented, and the third option was spent in Phase 6.
+>
+> **Not covered:** the application database. `/watchlists` reads a count and a
+> page separately too, but that file is WAL, this process is its only writer,
+> and the external-writer mechanism motivating this change does not apply.
+> Recorded as an open thread rather than folded in, because wrapping reads there
+> interleaves with the write path's implicit transactions and deserves its own
+> reasoning.
+
 ---
 
 ## Decision 2 — what does an error look like?

@@ -54,7 +54,13 @@ class Settings(BaseSettings):
     # Page cache for one connection, in KiB when negative (SQLite's convention:
     # a negative value means KiB, a positive one means pages). 8 MiB is generous
     # for a 58 MB database and costs nothing when unused.
-    cache_size_kib: int = Field(default=-8_000)
+    # Bounded, because safety and sensibility are separate obligations: any
+    # Python int is grammatically safe to format into a PRAGMA, and most are
+    # operationally absurd. SQLite spells "this many KiB" as a *negative*
+    # cache_size and "this many pages" as a positive one — so `le=-1` is the
+    # field's own name enforced. A positive value here would silently mean
+    # pages, contradicting the `_kib` suffix. The floor caps the cache at 1 GiB.
+    cache_size_kib: int = Field(default=-8_000, ge=-1_048_576, le=-1)
 
 
 @lru_cache

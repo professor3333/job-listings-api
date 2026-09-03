@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 
 from fastapi import Request
 
@@ -97,6 +98,47 @@ def connect(settings: Settings) -> sqlite3.Connection:
     # matters in a container whose filesystem is read-only.
     conn.execute("PRAGMA temp_store = MEMORY")
     return conn
+
+
+@contextmanager
+def read_snapshot(conn: sqlite3.Connection) -> Iterator[None]:
+    """Hold one consistent view of the database across several statements.
+
+    Two `SELECT`s are two read transactions. Python's `sqlite3` opens implicit
+    transactions before DML only, so a sequence of reads runs in autocommit and
+    each statement takes and releases its own `SHARED` lock independently. A
+    scraper commit landing in the gap gives two individually-correct, mutually
+    inconsistent answers — a `total` counted from a different set of rows than
+    `items` was drawn from. Nothing raises; the client just stops paginating
+    early and loses rows.
+
+    `BEGIN` is deferred, which is the only form available here: `BEGIN
+    IMMEDIATE` asks for a write lock, and this connection is `mode=ro` with
+    `PRAGMA query_only = 1`. Deferred is also sufficient — in rollback-journal
+    mode a read transaction holds `SHARED` from the first read until the end,
+    which is exactly what excludes the writer.
+
+    The cost is contention, and it is accepted deliberately: see the addendum to
+    Decision 1 in docs/design.md. The window this widens is one already held for
+    the duration of each statement, the gap being widened is in-process Python
+    with no I/O in it, and a lock this cannot get surfaces as `SQLITE_BUSY` ->
+    503 with `Retry-After` — a loud, documented, already-tested path. The
+    alternative failure is silent.
+
+    `in_transaction` reflects SQLite's own autocommit state rather than the
+    module's bookkeeping, so it stays accurate for a `BEGIN` issued as raw SQL.
+    Errors from the end are suppressed because the per-request connection is
+    closed immediately afterwards — which releases the transaction anyway — and
+    raising from a `finally` would replace the real exception with a tidy-up
+    failure, turning a 503 into a 500.
+    """
+    conn.execute("BEGIN")
+    try:
+        yield
+    finally:
+        if conn.in_transaction:
+            with suppress(sqlite3.Error):
+                conn.execute("END")
 
 
 def verify_schema(conn: sqlite3.Connection) -> None:
