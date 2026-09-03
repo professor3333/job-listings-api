@@ -338,6 +338,12 @@ All eleven met.
   here either.** Build 1's PROGRESS.md deferred it to "the next build, run it
   first, not last" — and Build 3 ran Claude-implements from Phase 0. Recorded as
   a fact rather than left looking pending; the syllabus below does not expire.
+  **Corrected 2026-09-03:** two syllabus rows had been ticked ✅ for derivations
+  *Claude* performed, in a column headed "re-derived unaided". The findings from
+  those runs are real and stand; the ticks were not, because they recorded the
+  wrong person doing the work — which would have made this very thread look
+  half-closed while nothing about it had changed. The table now names who
+  derived each row, and ⚙️ is not ✅.
 
 ## Queued work
 
@@ -715,39 +721,52 @@ This table is the other half: the list to rebuild unaided, which is a different
 test from having read the explanation. ◧ means part of the file was re-derived
 and the rest was not.
 
-| File | Written | Re-derived unaided |
-|------|---------|--------------------|
-| `pyproject.toml` | 2026-09-01 | ⬜ |
-| `.gitignore` | 2026-09-01 | ⬜ |
-| `.github/workflows/ci.yml` | 2026-09-01 | ⬜ |
-| `docs/design.md` | 2026-09-01 | ⬜ |
-| `docs/api.md` | 2026-09-01 | ⬜ |
-| `src/jobsapi/config.py` | 2026-09-01 | ⬜ |
-| `src/jobsapi/db.py` | 2026-09-01 | ⬜ |
-| `src/jobsapi/errors.py` | 2026-09-01 | ⬜ |
-| `src/jobsapi/main.py` | 2026-09-01 | ⬜ |
-| `src/jobsapi/problems.py` | 2026-09-01 | ⬜ |
-| `src/jobsapi/schemas.py` | 2026-09-01 | ✅ 2026-09-02 (`Pagination`) + 2026-09-03 (response models) |
-| `src/jobsapi/schemas.py` (Phase 3) | 2026-09-01 | ✅ 2026-09-02 |
-| `src/jobsapi/repository.py` | 2026-09-01 | ✅ 2026-09-03 |
-| `src/jobsapi/repository.py` (Phase 3) | 2026-09-01 | ✅ 2026-09-03 |
-| `src/jobsapi/repository.py` (Phase 5) | 2026-09-01 | ✅ 2026-09-03 |
-| `src/jobsapi/logging_config.py` | 2026-09-01 | ⬜ |
-| `src/jobsapi/routers/jobs.py` | 2026-09-01 | ✅ 2026-09-03 |
-| `src/jobsapi/routers/meta.py` | 2026-09-01 | ⬜ |
-| `src/jobsapi/routers/runs.py` | 2026-09-01 | ⬜ |
-| `tests/conftest.py` | 2026-09-01 | ⬜ |
-| `tests/test_health.py` | 2026-09-01 | ⬜ |
-| `Dockerfile` | 2026-09-01 | ⬜ |
-| `.dockerignore` | 2026-09-01 | ⬜ |
-| `scripts/make_demo_db.py` | 2026-09-01 | ⬜ |
-| `.github/workflows/ci.yml` (docker job) | 2026-09-01 | ⬜ |
-| `README.md` | 2026-09-01 | ⬜ |
-| `src/jobsapi/appdb.py` | 2026-09-01 | ⬜ |
-| `src/jobsapi/watchlist_repository.py` | 2026-09-01 | ⬜ |
-| `src/jobsapi/routers/watchlists.py` | 2026-09-01 | ⬜ |
-| `src/jobsapi/security.py` | 2026-09-01 | ⬜ |
-| `tests/test_watchlists.py` | 2026-09-01 | ⬜ |
+**Who derived it is part of the result, so the column now says.** Entries 1–3
+were run in teach-me mode — the owner reasoning the file out, Claude confining
+itself to confirming or correcting. Entries 4 and 5 (2026-09-03) were run in
+Claude-implements mode at the owner's instruction: *Claude* derived those, which
+is a real exercise and a useful one, but it is **not** the test this column was
+built to record. Marking them ✅ alongside the others would have made the table
+assert something false, and would have quietly contradicted the Open thread
+above recording that the unaided-rebuild checkpoint never happened in this build.
+
+- **✅** — re-derived by the owner, unaided.
+- **⚙️** — re-derived by Claude in implements mode. The findings are real and are
+  written up; the checkpoint is still open.
+
+| File | Written | Re-derived | By |
+|------|---------|------------|-----|
+| `pyproject.toml` | 2026-09-01 | ⬜ | — |
+| `.gitignore` | 2026-09-01 | ⬜ | — |
+| `.github/workflows/ci.yml` | 2026-09-01 | ⬜ | — |
+| `docs/design.md` | 2026-09-01 | ⬜ | — |
+| `docs/api.md` | 2026-09-01 | ⬜ | — |
+| `src/jobsapi/config.py` | 2026-09-01 | ⬜ | — |
+| `src/jobsapi/db.py` | 2026-09-01 | ⬜ | — |
+| `src/jobsapi/errors.py` | 2026-09-01 | ⬜ | — |
+| `src/jobsapi/main.py` | 2026-09-01 | ⬜ | — |
+| `src/jobsapi/problems.py` | 2026-09-01 | ⬜ | — |
+| `src/jobsapi/schemas.py` | 2026-09-01 | ✅ 2026-09-02 (`Pagination`) · ⚙️ 2026-09-03 (response models) | owner · Claude |
+| `src/jobsapi/schemas.py` (Phase 3) | 2026-09-01 | ✅ 2026-09-02 | owner |
+| `src/jobsapi/repository.py` | 2026-09-01 | ✅ 2026-09-03 | owner |
+| `src/jobsapi/repository.py` (Phase 3) | 2026-09-01 | ✅ 2026-09-03 | owner |
+| `src/jobsapi/repository.py` (Phase 5) | 2026-09-01 | ⚙️ 2026-09-03 | Claude |
+| `src/jobsapi/logging_config.py` | 2026-09-01 | ⬜ | — |
+| `src/jobsapi/routers/jobs.py` | 2026-09-01 | ✅ 2026-09-03 | owner |
+| `src/jobsapi/routers/meta.py` | 2026-09-01 | ⬜ | — |
+| `src/jobsapi/routers/runs.py` | 2026-09-01 | ⬜ | — |
+| `tests/conftest.py` | 2026-09-01 | ⬜ | — |
+| `tests/test_health.py` | 2026-09-01 | ⬜ | — |
+| `Dockerfile` | 2026-09-01 | ⬜ | — |
+| `.dockerignore` | 2026-09-01 | ⬜ | — |
+| `scripts/make_demo_db.py` | 2026-09-01 | ⬜ | — |
+| `.github/workflows/ci.yml` (docker job) | 2026-09-01 | ⬜ | — |
+| `README.md` | 2026-09-01 | ⬜ | — |
+| `src/jobsapi/appdb.py` | 2026-09-01 | ⬜ | — |
+| `src/jobsapi/watchlist_repository.py` | 2026-09-01 | ⬜ | — |
+| `src/jobsapi/routers/watchlists.py` | 2026-09-01 | ⬜ | — |
+| `src/jobsapi/security.py` | 2026-09-01 | ⬜ | — |
+| `tests/test_watchlists.py` | 2026-09-01 | ⬜ | — |
 
 **The three worth re-deriving first**, because they carry the build's actual
 lesson: `schemas.py` (the contract as types), `repository.py` (a WHERE clause
