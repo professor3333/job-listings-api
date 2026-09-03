@@ -114,6 +114,13 @@ Every `4xx` and `5xx` returns the same shape, served as
 **Branch on `code`, never on `title` or `detail`** — those are prose and may be
 reworded.
 
+`errors[].field` names the parameter, with its *location* stripped: Pydantic
+reports `("query", "limit")` and `("path", "job_id")`, and both are flattened to
+the bare name. So `GET /jobs/abc` returns `field: "job_id"`, not
+`"path.job_id"` — the name a client can act on, without framework vocabulary in
+it. The cost is that two parameters sharing a name in different locations would
+be indistinguishable in the body; no endpoint here has that shape.
+
 | `code` | Status | Meaning |
 | ------ | ------ | ------- |
 | `VALIDATION_FAILED` | `422` | One or more parameters are individually invalid. |
@@ -156,10 +163,17 @@ so a client cannot render "page 2 of 9" or know it has reached the end without
 requesting an empty page — and adding a field later would change the response's
 *type*, breaking every client, where adding a key to an object does not.
 
-`JobSummary` **omits `description`** (average 5.7 KB, maximum 33 KB). A page of
-100 would otherwise be several megabytes nobody asked for. It is served only by
-`GET /jobs/{job_id}`. `content_hash` and `hash_version` are never served — they
-are Build 2's bookkeeping.
+`JobSummary` **omits `description`** (average 5.3 KB, maximum 33.0 KB, 21.7 MB
+across the table — measured 2026-09-03 over 4,224 rows; it was 5.7 KB average at
+Phase 0 and the argument is unchanged). A page of 100 would otherwise be roughly
+half a megabyte nobody asked for. It is served only by `GET /jobs/{job_id}`.
+`content_hash` and `hash_version` are never served — they are Build 2's
+bookkeeping.
+
+The omission is enforced twice, and the two are not substitutes: `_SUMMARY_COLUMNS`
+does not select the column, which is what avoids reading ~21.7 MB off disk and
+building the strings, and `JobSummary` has no field to put it in, which is what
+makes the omission structural rather than a flag someone can drop.
 
 ### Query parameters
 

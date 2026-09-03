@@ -102,6 +102,34 @@ class TestCrossFieldConflicts:
         assert body["code"] == "VALIDATION_FAILED"
 
 
+class TestFieldNaming:
+    """`errors[].field` names the parameter with its location stripped.
+
+    Pydantic reports `("query", "limit")` and `("path", "job_id")`. Both are
+    flattened to the bare name, so a client acts on `job_id` rather than
+    `path.job_id` — the name it can do something about, without framework
+    vocabulary in it. Documented in `docs/api.md`; untested until now, and the
+    distinction is invisible for query parameters, which is why it took a path
+    parameter to surface it.
+    """
+
+    def test_a_path_parameter_is_named_without_its_location(
+        self, client: TestClient
+    ) -> None:
+        body = client.get("/jobs/abc").json()
+        assert body["code"] == "VALIDATION_FAILED"
+        assert [e["field"] for e in body["errors"]] == ["job_id"]
+
+    def test_a_query_parameter_is_named_the_same_way(self, client: TestClient) -> None:
+        body = client.get("/jobs", params={"limit": 0}).json()
+        assert [e["field"] for e in body["errors"]] == ["limit"]
+
+    def test_a_sub_resource_path_parameter_too(self, client: TestClient) -> None:
+        """`/jobs/abc/changes` fails on the same parameter, three segments in."""
+        body = client.get("/jobs/abc/changes").json()
+        assert [e["field"] for e in body["errors"]] == ["job_id"]
+
+
 class TestUnknownParameters:
     """Documented decision: reject, do not ignore."""
 

@@ -6,7 +6,7 @@ Running status of the build. Updated by Claude as work lands.
 **Repo:** https://github.com/professor3333/job-listings-api (public)
 **Local path:** `~/code/job-listings-api`
 **Branch:** `main` — **Phases 1, 2, 3, 5, 6 shipped as v0.6.0**; **Phase 4 as v0.7.0**; **`/runs` duration as v0.8.0**; **re-derivation fixes as v0.8.1**; **read consistency and the empty-filter contract as v0.9.0**
-**CI:** 🟢 green — 237 tests passing, lint and format clean, Docker image built
+**CI:** 🟢 green — 240 tests passing, lint and format clean, Docker image built
 and smoke-tested on every push.
 **Releases:** [v0.6.0](https://github.com/professor3333/job-listings-api/releases/tag/v0.6.0)
 · [v0.7.0](https://github.com/professor3333/job-listings-api/releases/tag/v0.7.0)
@@ -502,6 +502,37 @@ the ordering for most of the result set rather than a rare disambiguation.
 
 ---
 
+## Re-derivation — `routers/jobs.py`, run 2026-09-03
+
+The third syllabus entry, and the first where the derivation produced **no
+defects** — the route signatures, status codes and the declaration-order rule were
+reasoned out correctly from `docs/api.md` and the repository derived the day
+before. Three additions came out of it instead, all in the record rather than the
+code.
+
+| # | Addition | Where |
+|---|----------|-------|
+| 1 | `errors[].field` strips the location — `path.job_id` is flattened to `job_id` — which was undocumented and untested | `docs/api.md`, `tests/test_problems.py` |
+| 2 | The same `description` snapshot figure was dated in `design.md` and undated in `api.md`, so a Phase 0 measurement read as a current fact | `docs/api.md` |
+| 3 | The routes declare `response_model=` **and** a return annotation; FastAPI infers from the annotation when the argument is absent, so it is a redundancy — harmless, and `response_model` wins silently if they ever disagree | observation only |
+
+**The two rules worth carrying forward.** The declaration-order rule is not
+"literals before parameters": two routes collide only if they can match the same
+concrete path *and* accept the same method, and with the default converter equal
+segment count is the first-order filter. That is what makes `/jobs/{job_id}` (2
+segments) and `/jobs/{job_id}/changes` (3) safe in either order, while a future
+`/jobs/recent` would not be. And the failure signature is worth memorising: a
+**422 naming a path parameter the client never sent**, on a path `/docs` plainly
+lists — because both routes are registered, so a generated schema is correct
+about existence and silent about behaviour.
+
+Second: `response_model` saves the serialisation and the wire, and nothing else.
+The disk read is avoided by `_SUMMARY_COLUMNS`, one layer down. The model is the
+guarantee, the query is the saving, and treating either as a substitute for the
+other is how a list endpoint ends up reading 21.7 MB it will discard.
+
+---
+
 ## Re-derivation syllabus
 
 Every file in this build was written by Claude and explained inline, with the
@@ -531,7 +562,7 @@ and the rest was not.
 | `src/jobsapi/repository.py` (Phase 3) | 2026-09-01 | ✅ 2026-09-03 |
 | `src/jobsapi/repository.py` (Phase 5) | 2026-09-01 | ⬜ |
 | `src/jobsapi/logging_config.py` | 2026-09-01 | ⬜ |
-| `src/jobsapi/routers/jobs.py` | 2026-09-01 | ⬜ |
+| `src/jobsapi/routers/jobs.py` | 2026-09-01 | ✅ 2026-09-03 |
 | `src/jobsapi/routers/meta.py` | 2026-09-01 | ⬜ |
 | `src/jobsapi/routers/runs.py` | 2026-09-01 | ⬜ |
 | `tests/conftest.py` | 2026-09-01 | ⬜ |
