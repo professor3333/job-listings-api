@@ -237,10 +237,16 @@ with no recorded salary is not evidence of a salary above the threshold. This
 also falls out of SQL for free (`NULL >= 100000` is NULL, which is not true), so
 the documented behaviour and the natural implementation agree.
 
-This is not a corner case: `salary_min` is NULL in **~70%** of rows (69% at
-Phase 0, 70.4% re-measured at Phase 6 — the proportion is what is stable, not
-the row count). The same rule applies to `posted_after`/`posted_before` against
-a NULL `posted_at`.
+This is not a corner case: `salary_min` is NULL in **roughly three quarters** of
+rows — 69% at Phase 0, 70.4% at Phase 6, 74.6% on 2026-09-04. The proportion is
+far steadier than the row count, which grew by half over the same period, but it
+is not fixed either, and the reason is worth knowing: `arbeitnow` carries a
+salary on only 9% of its rows, and its share of the dataset grew from 64% to 74%
+over those three days. A proportion is only stable while the *mix* behind it is,
+so a per-source figure drifts whenever one source outgrows the others. The
+decision therefore rests on "most rows have no recorded salary", which stays
+true under any mix, rather than on any one of those figures. The same rule
+applies to `posted_after`/`posted_before` against a NULL `posted_at`.
 
 To find rows with no recorded value, use the tri-state filter where one exists —
 `remote=unknown`. There is currently **no** way to ask for "salary not recorded"
@@ -289,10 +295,12 @@ still rejected: the allowlist defines the public contract, not merely what is
 safe.
 
 Sorting always appends the primary key as a tie-break. Without it, ordering by a
-column with many repeated values (`posted_at` has ~800 distinct values across
-3,105 rows) leaves ties whose order SQLite may resolve differently between
-queries, so paging with `limit`/`offset` would silently repeat some rows and skip
-others.
+column with many repeated values leaves ties whose order SQLite may resolve
+differently between queries, so paging with `limit`/`offset` would silently
+repeat some rows and skip others. `posted_at` is a date, so ties there reach
+into the hundreds on an active day and the tie-break is load-bearing rather than
+theoretical — on 2026-09-04, 239 distinct dates across 4,771 rows: a median of 3
+rows per date, but 545 on the busiest, which is far more than one page.
 
 ### Examples
 
@@ -417,19 +425,23 @@ Counts, per-field coverage, the `remote` tri-state split, and the `posted_at`
 date range.
 
 Coverage is the honest counterpart to the NULL-filter decision above: a client
-seeing `salary_min` populated in 31% of rows understands why a salary filter
-returns little, rather than assuming the filter is broken. Real values:
+seeing `salary_min` populated in about a quarter of rows understands why a
+salary filter returns little, rather than assuming the filter is broken.
+
+Measured **2026-09-04** against 4,771 rows. This is a snapshot, not a contract:
+every figure below moves each time the scraper runs, and `/stats` is the live
+answer. Compare against `/stats`, never against this table.
 
 | Field | Coverage |
 | ----- | -------- |
 | `posted_at` | 100.00% |
-| `description` | 99.19% |
-| `location` | 97.84% |
-| `remote` | 63.64% |
-| `seniority` | 50.82% |
-| `currency` / `salary_raw` | 39.61% |
-| `salary_min` | 31.47% |
-| `salary_max` | 29.02% |
+| `description` | 99.31% |
+| `location` | 97.44% |
+| `remote` | 74.01% |
+| `seniority` | 50.77% |
+| `currency` / `salary_raw` | 34.92% |
+| `salary_min` | 25.38% |
+| `salary_max` | 22.11% |
 
 ---
 

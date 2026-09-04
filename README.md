@@ -28,8 +28,9 @@ That file is a dead end for anyone who is not sitting in front of it:
   a copy is stale the moment the scraper next runs.
 - **Reading it requires knowing the schema.** `remote` is a nullable integer
   where `NULL` means "never established" rather than "no". `salary_min` is absent
-  in ~70% of rows. Anyone querying the file directly has to rediscover those
-  facts, and will get them wrong in a way that produces plausible numbers.
+  in roughly three quarters of rows. Anyone querying the file directly has to
+  rediscover those facts, and will get them wrong in a way that produces
+  plausible numbers.
 - **Handing someone the file hands them a writable copy.** Nothing stops an
   accidental `DELETE` against the dataset the scraper spent days building.
 - **The file is live.** The scraper takes an `EXCLUSIVE` lock during its commits,
@@ -50,7 +51,7 @@ That contract has to answer questions the file itself never had to:
 | Question the file never had to answer | The answer here |
 |---|---|
 | What happens on `?limit=1000`? | `422`, naming the field and the rule — never silently clamped |
-| Does `salary_min_gte=100000` include rows with no salary? | No — documented, because it governs ~70% of the data |
+| Does `salary_min_gte=100000` include rows with no salary? | No — documented, because it governs roughly three quarters of the data |
 | What does `?sort=id;DROP TABLE jobs` do? | `422` from an enum allowlist; an identifier can never be a bound parameter |
 | What comes back while the scraper holds the lock? | `503` with `Retry-After` — and a *different* `503` without one when retrying cannot help |
 | What does a client see when something genuinely breaks? | `500` with an opaque body and a `request_id`; the traceback goes to the log, never the response |
@@ -161,12 +162,12 @@ from a six-member enum written in our own source. `?sort=id;DROP TABLE jobs` is 
 422 from enum validation and never reaches the repository.
 
 **Pagination has a tie-break.** `ORDER BY posted_at DESC` alone is not a total
-order — thousands of rows share a date, and `LIMIT`/`OFFSET` over an unstable
+order — hundreds of rows share a date, and `LIMIT`/`OFFSET` over an unstable
 sort silently repeats some rows and skips others. Every sort ends `, id`.
 
 **NULL never satisfies a filter.** `salary_min_gte=100000` excludes rows with no
-recorded salary, which is ~70% of them. This is a documented decision, not an
-accident of SQL — see [`docs/api.md`](docs/api.md#decision-null-values-never-satisfy-a-filter).
+recorded salary, which is roughly three quarters of them. This is a documented
+decision, not an accident of SQL — see [`docs/api.md`](docs/api.md#decision-null-values-never-satisfy-a-filter).
 The opposite call is made one field over: `remote` is tri-state, and
 `remote=unknown` means `IS NULL`, because NULL there records that the scraper
 never established the fact — collapsing it to `false` would invent data.
