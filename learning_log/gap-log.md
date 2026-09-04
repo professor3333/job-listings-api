@@ -175,6 +175,16 @@ Format: `- YYYY-MM-DD — the concept — where it came up`
   support. Cross-check with a *different mechanism* — a login shell, the package
   manager, the process table — before asserting absence. — Phase 6 follow-up.
 
+- 2026-09-04 — **A dataset-wide proportion is a weighted average, so it drifts
+  when the source *mix* drifts even if every underlying rate holds.** `docs/api.md`
+  said `salary_min` was NULL in ~70% of rows; the live answer was 74.6%. No rate
+  changed: `arbeitnow` carries a salary on 9.09% of its rows against 38.96–100%
+  for the Greenhouse sources, and its share of the dataset grew 63.6% → 74.0%.
+  Re-weighting the unchanged per-source rates reproduces the drift exactly
+  (0.74 × 9.09% + 0.26 × 71.8% = 25.4%, served 25.38%). "Prefer a proportion to
+  a row count" is right and incomplete — the durable form is the per-source rate,
+  or a claim true under any mix. — found diffing `docs/` against live `/stats`.
+
 ---
 
 ## AI-WRITTEN register
@@ -217,6 +227,8 @@ list only once it has been written up in `learning-log.md`.
 | 2026-09-01 | `src/jobsapi/routers/watchlists.py` | 201+Location, 204 with an empty body, 409 vs 422, and why PUT and PATCH need different request models | ☑ |
 | 2026-09-01 | `src/jobsapi/security.py` | Why one optional key in one dependency is the ceiling, and why a wrong key is 401 rather than 403 | ☑ |
 | 2026-09-01 | `tests/test_watchlists.py` | Why the cascade is asserted against the database and the read-only guarantee against the file's bytes | ☑ |
+| 2026-09-04 | `docs/api.md` (figure-drift pass) | Why a quoted proportion needs a date *and* a mix: a dataset-wide rate is a weighted average, so it moves when one source outgrows the others while every per-source rate holds | ☑ |
+| 2026-09-04 | `README.md` (figure-drift pass) | Why the stranger-facing prose states "roughly three quarters" where the reference doc states 74.6% on a date — a figure that cannot rot beats a figure that must be maintained | ☑ |
 
 ---
 
@@ -1317,3 +1329,77 @@ The second is a request to the host. The practical consequence is that a rewrite
 is not a remediation for a leaked credential — rotating it is — because the
 window between push and purge is unbounded and the object stays fetchable
 throughout.
+
+---
+
+## 2026-09-04 — explain-back: the drifted figures in `docs/api.md` and `README.md`
+
+**Q1. `docs/design.md` states the rule these edits enforce — "figures quoted
+anywhere in `docs/` are snapshots and carry the date they were taken" — and
+`docs/design.md` was not edited. Why is the file that states the convention the
+one file left alone?**
+
+Because it is the only one already complying, and its figures are load-bearing
+in a way the others' are not. Its tables open with "Taken 2026-09-01 **at Phase
+0** … left as measured — the decisions they justify were made against them."
+That is a dated snapshot doing exactly what the convention asks, and the numbers
+are evidence for a decision that was actually made against them. Refreshing them
+would falsify the record: Decision 1 was argued against a 58 MB file with 3,105
+rows, and rewriting those to today's values would make the reasoning look as
+though it had considered data that did not exist yet.
+
+So the two files split by *purpose*, not by age. `design.md` is a decision record
+— its figures are historical and must be frozen. `api.md` is a reference a client
+reads to predict the live service — its figures describe the present and must
+either track it or say when they were taken. The same number is correct frozen in
+one file and stale in the other, which is why "update the figures in `docs/`" was
+the wrong instruction to give myself and "update the figures that claim to
+describe now" was the right one.
+
+**Q2. `salary_min` NULL went 69% → 70.4% → 74.6% while no source changed how
+often it reports a salary. Where did 4 points come from?**
+
+From the weights, not the rates. The dataset-wide figure is a weighted average of
+per-source rates, and one source's share grew.
+
+`arbeitnow` carries `salary_min` on 9.09% of its rows; every Greenhouse source
+runs 38.96% to 100%. `arbeitnow`'s share of the dataset went from 63.6% to 74.0%
+in three days, so the cheapest rows crowded out the richest ones. Re-weighting
+the unchanged rates predicts the observed value: 0.74 × 9.09% + 0.26 × 71.8% =
+25.4% present, against 25.38% served. Nothing about salary reporting changed —
+the composition did.
+
+That share is independently checkable, which is what makes this more than a
+story: `remote` is non-NULL on `arbeitnow` rows and only those (3,531 of 3,531,
+and 3,531 non-NULL dataset-wide). So the documented `remote` coverage of 63.64%
+*was* `arbeitnow`'s share at the time it was written, and the 74.01% now served
+is its share today. The stale figure recorded the mix that caused the drift.
+
+The correction to the earlier lesson: `design.md` concluded "the absolute numbers
+moved by roughly 13% in a day. **The proportions did not**." True over that day,
+and it stopped being true over three. A proportion is stabler than a count, not
+stable — and one interval is not a trend.
+
+**Q3. Both files now say the same thing in different words: `api.md` says
+"74.6% on 2026-09-04", `README.md` says "roughly three quarters" and no date.
+Why is the inconsistency deliberate?**
+
+Because they have different maintenance costs and different readers. A dated
+precise figure is honest but must be re-measured or it becomes exactly the defect
+being fixed here; a rounded claim needs no maintenance because "roughly three
+quarters" survives the next scrape and the one after it.
+
+`api.md` is the reference someone reads next to the running service, so precision
+earns its keep — and the date plus "compare against `/stats`, never against this
+table" tells the reader which of the two to trust when they disagree. `README.md`
+is read once by a stranger deciding whether the project is worth their time; a
+figure to two decimal places tells them nothing extra and quietly commits the
+project to maintaining it in a third place.
+
+This is the `v0.8.0` version-drift lesson one layer up — a duplicated fact is
+fixed by deletion, not by diligence. Deletion is unavailable here, since a
+reference doc that shows no numbers teaches less than one that does, so the next
+best thing is to keep one authoritative copy (`/stats`, computed at request
+time), date the copy that must exist, and round the copy that does not need to be
+exact. The remaining risk is only that the dated table ages, and it now says so
+in its own text.

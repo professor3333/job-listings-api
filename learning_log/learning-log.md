@@ -1253,3 +1253,77 @@ built artefact its version and compare it to the tag being cut. `v0.8.0`
 permanently ships an app reporting `0.7.0`; that is now history, fixed forward,
 because moving a published tag to repair a docs-level defect is the thing this
 project already decided against for `v0.6.0`.
+
+---
+
+## The proportion that was only stable for a day
+
+**What broke.** `docs/api.md`'s `/stats` coverage table, introduced as "Real
+values:" with no date, disagreed with the running service by up to 10.4
+percentage points — `remote` documented at 63.64% against 74.01% served. Three
+prose figures had drifted with it: `salary_min` "populated in 31% of rows"
+(25.38% live), "NULL in **~70%** of rows" (74.62%), and "`posted_at` has ~800
+distinct values across 3,105 rows" (239 distinct across 4,771). Nothing failed:
+tests, lint, CI and the ship sequence were all green, because no check compares
+a sentence in `docs/` against the number the API returns.
+
+**Why it happened.** Two layers, and the second is the interesting one.
+
+The shallow layer: `docs/design.md` had already written the rule — prefer "NULL
+in ~70% of rows" over "3,105 rows" because "the first survives the data growing
+and the second is stale the next time the scraper runs", and "figures quoted
+anywhere in `docs/` are snapshots and carry the date they were taken." `api.md`
+carried an undated table and a bare row count, so the convention existed and was
+simply not applied one file over.
+
+The deep layer: the convention itself was weaker than it read. `design.md`
+concluded "the absolute numbers moved by roughly 13% in a day. **The proportions
+did not**" — `salary_min` NULL 69% → 70.4%. Over three days it went to 74.6%,
+and no source changed how often it reports a salary. `arbeitnow` carries
+`salary_min` on 9.09% of its rows against 38.96–100% for every Greenhouse
+source, and its share of the dataset grew from 63.6% to 74.0%. Re-weighting the
+*unchanged* per-source rates by the new mix reproduces the drift: 0.74 × 9.09% +
+0.26 × 71.8% = 25.4% present, against 25.38% served. The share is independently
+verifiable, because `remote` is non-NULL on `arbeitnow` rows and only those
+(3,531 of 3,531, and 3,531 dataset-wide) — so the stale `remote` figure of
+63.64% *was* `arbeitnow`'s share on the day it was written, and the 74.01% now
+served is its share today. The stale number was a record of the mix that
+invalidated it.
+
+**What it teaches.** A dataset-wide proportion over a multi-source dataset is a
+weighted average, so it moves when the weights move even when every underlying
+rate is constant. "Prefer a proportion to a row count" is the right instinct and
+an incomplete rule: the forms that actually survive are the per-source rate
+(`arbeitnow`: 9%) or a claim true under any mix ("most rows have no recorded
+salary"). The dataset-wide percentage is neither — it is a fact about the
+sampling, wearing the costume of a fact about job postings.
+
+The secondary lesson is about evidence: "13% in a day, proportions held" was one
+interval, and one interval cannot distinguish a stable quantity from a slow
+trend. The original claim was not wrong when written; it was over-generalised
+from a single measurement.
+
+**Where it was applied.** `docs/api.md` — the coverage table re-measured
+2026-09-04 against 4,771 rows and stamped with that date plus "compare against
+`/stats`, never against this table"; the NULL-salary paragraph now carries the
+69% → 70.4% → 74.6% series *and* the mix explanation, so the number's movement
+is documented rather than silently corrected; the tie-break sentence rewritten
+to lead with the mechanism, with dated figures as support (median 3 rows per
+date, 545 on the busiest — the old "~800 distinct values" had also inverted, as
+distinct dates *fell* to 239 while rows grew). `README.md` — three "~70%" claims
+became "roughly three quarters", a form with no maintenance cost, and "thousands
+of rows share a date" became "hundreds", which the measured 545 maximum
+supports. `docs/design.md` was deliberately not touched: its figures are dated
+Phase 0 evidence for decisions made against them, and refreshing them would
+falsify the record.
+
+**How to detect it next time.** This is the `v0.8.0` version-drift lesson one
+layer up — a duplicated fact is fixed by deletion, not by diligence, and a
+figure in `docs/` is a duplicate of one the service computes at request time.
+Full deletion is not available, since a reference doc showing no numbers teaches
+less, so the duplicate is dated and explicitly subordinated to `/stats`. The
+cheap ship-sequence check, alongside "ask the built artefact its version": ask
+the running service for `/stats` and diff it against the table before cutting a
+tag. More generally — whenever a proportion is quoted as a stable property,
+check whether it is a weighted average, and if it is, quote the weights or quote
+the claim that survives them.
