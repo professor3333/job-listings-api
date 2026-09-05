@@ -9,19 +9,22 @@ on top.
 It **reads** Build 2's dataset and **never writes to it**. Watchlists — the one
 thing you can create here — live in a separate database this service owns.
 
-The dataset comes from `job-listing-scraper` (Build 2) — 3,498 jobs across 8
-sources at the time of writing, with scrape-run history and field-level change
-tracking. **That repository is private, so this one is written to stand on its
-own:** everything you need to run, test and understand this service is here, and
-`scripts/make_demo_db.py` builds a working database from scratch without it. This service does not scrape anything. It reads
-that database, never writes to it, and exposes it as JSON.
+The dataset comes from `job-listing-scraper` (Build 2) — more than 5,000 jobs
+across 8 sources, with scrape-run history and field-level change tracking.
+`/stats` is the live count. **That repository is private, so this one is written
+to stand on its own:** everything you need to run, test and understand this
+service is here, and `scripts/make_demo_db.py` builds a working database from
+scratch without it. This service does not scrape anything. It reads that
+database, never writes to it, and exposes it as JSON.
 
 ---
 
 ## The problem
 
-Build 2 finished with 3,498 job listings in a 64 MB SQLite file on one laptop.
-That file is a dead end for anyone who is not sitting in front of it:
+Build 2 left its listings in a single SQLite file on one laptop — 3,498 rows in
+64 MB when this build started on 2026-09-01, 5,276 in 85 MB by 2026-09-05, and
+growing every time the scraper runs. That file is a dead end for anyone who is
+not sitting in front of it:
 
 - **Only one machine can use it.** There is no way to query it from a script, a
   notebook, a phone, or another person's computer without copying the file — and
@@ -541,7 +544,7 @@ to prove the write path never touched it.
 
 The image is multi-stage (the build toolchain never ships), runs as a non-root
 user, and has a healthcheck. **The database is a mounted volume, never a layer**
-— baking a 64 MB snapshot into an image would make it stale the moment the
+— baking the database into an image would make it stale the moment the
 scraper next runs, and would push someone else's data to a registry.
 
 ```bash

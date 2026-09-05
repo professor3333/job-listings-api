@@ -1403,3 +1403,71 @@ best thing is to keep one authoritative copy (`/stats`, computed at request
 time), date the copy that must exist, and round the copy that does not need to be
 exact. The remaining risk is only that the dated table ages, and it now says so
 in its own text.
+
+---
+
+## 2026-09-05 — explain-back: the README figures the last refresh did not reach
+
+PR #35 refreshed the drifted figures in `docs/api.md` and left `README.md` alone.
+A run-and-check the next day found three stale numbers there: the opening said
+"3,498 jobs ... at the time of writing", "The problem" said Build 2 "finished
+with 3,498 job listings in a 64 MB SQLite file", and the Docker section argued
+against "baking a 64 MB snapshot" into an image. The live service was serving
+4,771 rows at the start of that check and 5,276 by the end of it — the scraper
+ran while the check was running, which is the defect demonstrating itself.
+
+**Q1. PR #35 set the rule "figures quoted anywhere in `docs/` are snapshots and
+carry the date they were taken", and deliberately left `design.md` untouched. Why
+did `README.md` fall through both the fix and the exemption?**
+
+Because the rule was scoped to a directory rather than to a kind of claim, and
+`README.md` is not in `docs/`. The exemption granted to `design.md` was reasoned
+— its tables are dated Phase 0 evidence for decisions argued against them, so
+refreshing them would falsify the record — but the scope of the *fix* was
+incidental. `README.md` quotes the same dataset for the same reason and was
+simply not looked at.
+
+The durable form of the rule is not "figures in `docs/`" but "figures anywhere in
+the repository", with the exemption attached to the *role* of the figure rather
+than its location: a measurement offered as evidence for a past decision is
+frozen and dated; a measurement offered as a description of the current dataset
+is live and must either be re-measured or written so it does not need to be.
+
+**Q2. The 2026-09-04 entry concluded that `README.md` should carry rounded,
+maintenance-free claims and `api.md` the dated precise ones. The first draft of
+this fix wrote "5,276 jobs, measured 2026-09-05" into the README opening. Why was
+that wrong, and why is the dated pair in "The problem" not wrong in the same
+way?**
+
+The first draft reintroduced exactly the defect it was fixing. A precise
+current-state figure in the README commits the project to maintaining the same
+fact in a third place, and it is stale the next time the scraper runs — the
+opening now reads "more than 5,000 jobs" and names `/stats` as the live count,
+which survives every future scrape and needs no date because it asserts nothing
+about a moment.
+
+The pair in "The problem" is a different kind of claim and does not rot. "3,498
+rows in 64 MB on 2026-09-01, 5,276 in 85 MB by 2026-09-05" is two dated
+historical measurements, and a dated past measurement stays true permanently. The
+distinction worth keeping is not precise-versus-rounded but **current-state
+versus historical**: an undated current claim rots silently, a dated current
+claim ages into something true-but-misleading, and a dated historical claim is
+true forever. The growth those two figures show is the argument the paragraph is
+making — that a copied file is stale the moment the scraper runs — so here the
+numbers are load-bearing rather than decorative, and earn their maintenance cost
+by having none.
+
+**Q3. The Docker section's number was deleted rather than refreshed. Why is that
+the right treatment there and not in the other two places?**
+
+Because the size was illustrative and the sentence did not depend on it. The
+argument is that a database baked into an image goes stale and ships someone
+else's data to a registry; that holds at 64 MB, at 85 MB, and at any size. The
+figure was doing no work, and a sentence *arguing that snapshots go stale* while
+quoting a stale snapshot undercuts itself.
+
+This is the `v0.8.0` version-drift lesson again, and the 2026-09-04 entry stated
+its resolution: a duplicated fact is fixed by deletion, not by diligence.
+Deletion was unavailable for the coverage table, which is why that one was dated
+instead. Here deletion *was* available, so it was the cheaper fix — the figure
+that cannot rot is the one that is not written down.
